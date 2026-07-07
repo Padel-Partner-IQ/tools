@@ -1,9 +1,9 @@
 {
   "version": "0.1.0",
-  "git_commit": "540d9111a1d9",
+  "git_commit": "6eec17d60395",
   "git_branch": "main",
   "git_dirty": false,
-  "build_date": "2026-07-07T11:24:53.153Z",
+  "build_date": "2026-07-07T11:50:50.709Z",
   "tools": [
     {
       "title": "Coach Calibration Workbench",
