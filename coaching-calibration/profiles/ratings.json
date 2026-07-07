@@ -1,0 +1,30 @@
+{
+  "ratings_id": "padel_partner_iq_rating_scale",
+  "ratings_version": "1.0.0",
+  "items": {
+    "not_assessed": {
+      "label": "Not Assessed",
+      "description": "This observation was intentionally not assessed."
+    },
+    "too_little": {
+      "label": "Too Little",
+      "description": "The observed characteristic is present, but insufficient for the intended technique."
+    },
+    "good": {
+      "label": "Good",
+      "description": "The observed characteristic is appropriate for the intended technique."
+    },
+    "excellent": {
+      "label": "Excellent",
+      "description": "The observed characteristic is demonstrated exceptionally well."
+    },
+    "too_much": {
+      "label": "Too Much",
+      "description": "The observed characteristic is excessive for the intended technique."
+    },
+    "unclear": {
+      "label": "Unclear",
+      "description": "The observation cannot be judged reliably from the available evidence."
+    }
+  }
+}

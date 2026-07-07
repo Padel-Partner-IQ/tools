@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Coach Calibration Workbench</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="topbar-identity">
+          <h1>Coach Calibration Workbench</h1>
+          <div class="profile-banner">
+            <span id="profile-name" class="profile-empty">No profile loaded</span>
+            <span id="profile-shot-type" class="profile-empty">Open a calibration profile to begin.</span>
+            <span id="profile-versions" class="profile-versions"></span>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <input id="profile-file" type="file" accept="application/json" hidden />
+          <input id="video-file" type="file" accept="video/*" hidden />
+          <button id="load-profile" class="primary">Load Profile...</button>
+          <button id="open-video" class="primary">Open Video</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="video-column">
+          <div class="video-panel">
+            <video id="video" controls></video>
+            <div class="video-meta">
+              <div><strong>Frame:</strong> <span id="frame-number">0</span></div>
+              <div><strong>Timestamp:</strong> <span id="timestamp">0.000s</span></div>
+            </div>
+            <div class="controls">
+              <button id="prev-frame">◀ Previous Frame</button>
+              <button id="play-pause">▶ Play / Pause</button>
+              <button id="next-frame">Next Frame ▶</button>
+            </div>
+            <div id="capture-feedback" class="capture-feedback" aria-live="polite"></div>
+            <div id="duplicate-frame-error" class="duplicate-frame-error" role="alert" hidden></div>
+          </div>
+
+          <div class="below-video">
+            <section class="card overall-shot">
+              <h2>Overall Shot</h2>
+              <div class="assessment-block">
+                <h3>Overall Quality <span id="overall-quality-help" class="help-slot" hidden></span></h3>
+                <div id="overall-quality-options" class="quality-options" role="radiogroup" aria-label="Overall quality"></div>
+              </div>
+              <label class="field">
+                <span>Overall Notes</span>
+                <textarea id="overall-notes" rows="3" placeholder="Notes about the shot as a whole"></textarea>
+              </label>
+            </section>
+
+            <section class="card session-panel">
+              <h2>Session</h2>
+              <label class="field">
+                <span>Annotator</span>
+                <input id="annotator" type="text" placeholder="Required for export" required />
+              </label>
+              <dl class="session-meta">
+                <div><dt>Video</dt><dd id="session-video">No video loaded</dd></div>
+                <div><dt>Profile</dt><dd id="session-profile">No profile loaded</dd></div>
+                <div><dt>Ontology</dt><dd id="session-ontology">—</dd></div>
+              </dl>
+              <div id="export-status" class="export-status" role="status">Enter an annotator and record every phase to enable export.</div>
+              <button id="export-csv" class="primary" disabled>Export CSV</button>
+            </section>
+          </div>
+        </section>
+
+        <aside class="sidebar">
+          <section class="card progress-card">
+            <h2>Calibration Progress</h2>
+            <ul id="progress-list" class="progress-list"></ul>
+            <p id="progress-summary" class="progress-summary">0 of 0 phases recorded</p>
+          </section>
+
+          <section class="card phase-card">
+            <h2>Current Phase</h2>
+            <div id="phase-empty" class="phase-empty">Select a phase from Calibration Progress to begin.</div>
+            <div id="phase-body" hidden>
+              <div class="phase-name-row">
+                <h3 id="phase-name" class="phase-name"></h3>
+                <span id="phase-name-help" class="help-slot" hidden></span>
+              </div>
+              <p id="phase-description" class="phase-description"></p>
+
+              <div class="assessment-block">
+                <h3>Phase Quality <span id="phase-quality-help" class="help-slot" hidden></span></h3>
+                <div id="phase-quality-options" class="quality-options" role="radiogroup" aria-label="Phase quality"></div>
+              </div>
+
+              <div class="assessment-block">
+                <h3>Coaching Observations</h3>
+                <p class="profile-hint">
+                  Click an <span class="help-inline-glyph" aria-hidden="true">ⓘ</span> button to read its coaching description.
+                  <span id="rating-scale-help" class="help-slot" hidden></span>
+                </p>
+                <ul id="observations-list" class="observations-list"></ul>
+              </div>
+
+              <label class="field">
+                <span>Phase Notes</span>
+                <textarea id="phase-notes" rows="3" placeholder="Optional notes for this phase"></textarea>
+              </label>
+
+              <button id="save-phase" class="primary">Save Phase Assessment</button>
+            </div>
+          </section>
+
+          <section class="card recorded-card">
+            <h2>Recorded Assessments</h2>
+            <div class="table-wrap">
+              <table id="recorded-assessments">
+                <thead>
+                  <tr>
+                    <th>Frame</th>
+                    <th>Phase</th>
+                    <th>Quality</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <div id="export-confirm" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="export-confirm-title">
+        <h2 id="export-confirm-title">Export Calibration Data</h2>
+        <dl class="export-summary" id="export-summary"></dl>
+        <div class="export-phase-checklist">
+          <h3>Recorded Phases</h3>
+          <ul id="export-phase-list"></ul>
+        </div>
+        <div class="modal-actions">
+          <button id="export-cancel">Cancel</button>
+          <button id="export-confirm-button" class="primary">Export CSV</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
+

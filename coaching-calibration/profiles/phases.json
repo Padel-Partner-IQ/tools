@@ -1,0 +1,26 @@
+{
+  "phases_id": "padel_partner_iq_calibration_phases",
+  "phases_version": "1.0.0",
+  "items": {
+    "ready_position": {
+      "label": "Ready Position",
+      "description": "Assess the player's ready position immediately before initiating movement towards the shot."
+    },
+    "max_take_back": {
+      "label": "Max Take Back",
+      "description": "Assess the moment of maximum preparation immediately before the forward swing begins."
+    },
+    "contact_point": {
+      "label": "Contact Point",
+      "description": "Assess the instant the player makes contact with the ball, or the best estimate where contact occurs."
+    },
+    "max_follow_through": {
+      "label": "Max Follow Through",
+      "description": "Assess the point at which the follow-through reaches its maximum extent before recovery begins."
+    },
+    "recovery_position": {
+      "label": "Recovery Position",
+      "description": "Assess the player's return towards a balanced ready position after completing the shot."
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "version": "0.1.0",
+  "git_commit": "540d9111a1d9",
+  "git_branch": "main",
+  "git_dirty": false,
+  "build_date": "2026-07-07T11:24:53.153Z",
+  "tools": [
+    {
+      "title": "Coach Calibration Workbench",
+      "slug": "coaching-calibration",
+      "status": "available"
+    },
+    {
+      "title": "Court Homography",
+      "slug": "court-homography",
+      "status": "coming-soon"
+    },
+    {
+      "title": "Benchmark Browser",
+      "slug": "benchmark-browser",
+      "status": "coming-soon"
+    },
+    {
+      "title": "Observation Review",
+      "slug": "observation-review",
+      "status": "coming-soon"
+    },
+    {
+      "title": "Pose Debugger",
+      "slug": "pose-debugger",
+      "status": "coming-soon"
+    }
+  ]
+}

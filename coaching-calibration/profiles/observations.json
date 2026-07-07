@@ -1,0 +1,75 @@
+{
+  "ontology_id": "padel_partner_iq_coaching_observations",
+  "ontology_version": "1.0.0",
+  "description": "Shared coaching observation vocabulary used by Coach Calibration Workbench profiles. These entries define coach-facing concepts only; engineering metric comparisons are handled downstream in calibration analysis.",
+  "observations": {
+    "shoulder_turn": {
+      "label": "Shoulder Turn",
+      "description": "Assess whether the player has rotated the shoulders appropriately for the selected phase."
+    },
+    "hip_rotation": {
+      "label": "Hip Rotation",
+      "description": "Assess whether the hips rotate appropriately into and through the selected phase."
+    },
+    "shoulder_hip_separation": {
+      "label": "Shoulder / Hip Separation",
+      "description": "Assess whether the relationship between shoulder rotation and hip rotation looks appropriate for the selected phase."
+    },
+    "hitting_arm_extension": {
+      "label": "Hitting Arm Extension",
+      "description": "Assess the extension and reach of the hitting arm for the selected phase."
+    },
+    "non_hitting_arm_extension": {
+      "label": "Non-hitting Arm Extension",
+      "description": "Assess whether the non-hitting arm is extended or positioned appropriately for the selected phase."
+    },
+    "hitting_arm_structure": {
+      "label": "Hitting Arm Structure",
+      "description": "Assess whether the hitting arm shape is appropriate for the selected phase, including whether it looks compact, controlled and well organised."
+    },
+    "non_hitting_arm_support": {
+      "label": "Non-hitting Arm Support",
+      "description": "Assess whether the non-hitting arm supports the stroke effectively through positioning, balance or preparation."
+    },
+    "elbow_position": {
+      "label": "Elbow Position",
+      "description": "Assess whether the elbow position is appropriate for the selected phase, including whether it appears too tucked, too extended, too high or too far from the body."
+    },
+    "knee_bend": {
+      "label": "Knee Bend",
+      "description": "Assess whether the player has an appropriate athletic base and knee flexion for the selected phase."
+    },
+    "racket_side_preparation": {
+      "label": "Arm / Racket-Side Preparation",
+      "description": "Assess whether the hitting side is prepared appropriately for the selected phase. This is judged from visible arm and body positioning rather than racket-face detail."
+    },
+    "contact_height": {
+      "label": "Contact Height",
+      "description": "Assess whether the apparent contact height is appropriate relative to the player's body position."
+    },
+    "contact_distance": {
+      "label": "Contact Distance from Body",
+      "description": "Assess whether the apparent contact point is appropriately spaced from the body."
+    },
+    "body_balance": {
+      "label": "Body Balance",
+      "description": "Assess whether the player looks balanced, stable and in control during the selected phase."
+    },
+    "shoulder_vertical_alignment": {
+      "label": "Shoulder Vertical Alignment",
+      "description": "Assess whether the shoulders appear vertically organised and controlled, rather than excessively tilted or collapsed, during the selected phase."
+    },
+    "stance_width": {
+      "label": "Stance Width",
+      "description": "Assess whether the player's stance width is appropriate for the selected phase."
+    },
+    "weight_transfer": {
+      "label": "Weight Transfer / Forward Commitment",
+      "description": "Assess whether the player transfers weight or commits forward appropriately through the selected phase."
+    },
+    "follow_through_shape": {
+      "label": "Follow-through Shape",
+      "description": "Assess whether the follow-through shape looks compact, controlled and appropriate for the shot."
+    }
+  }
+}
