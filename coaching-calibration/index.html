@@ -3,25 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Coach Calibration Workbench</title>
+    <title>Annotation Workbench</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
         <div class="topbar-identity">
-          <h1>Coach Calibration Workbench</h1>
-          <div class="profile-banner">
-            <span id="profile-name" class="profile-empty">No profile loaded</span>
-            <span id="profile-shot-type" class="profile-empty">Open a calibration profile to begin.</span>
-            <span id="profile-versions" class="profile-versions"></span>
+          <h1>Annotation Workbench</h1>
+          <div class="video-banner">
+            <span id="video-name" class="profile-empty">No video loaded</span>
+            <span id="video-frame-rate" class="profile-empty"></span>
           </div>
-        </div>
-        <div class="topbar-actions">
-          <input id="profile-file" type="file" accept="application/json" hidden />
-          <input id="video-file" type="file" accept="video/*" hidden />
-          <button id="load-profile" class="primary">Load Profile...</button>
-          <button id="open-video" class="primary">Open Video</button>
         </div>
       </header>
 
@@ -34,25 +27,30 @@
               <div><strong>Timestamp:</strong> <span id="timestamp">0.000s</span></div>
             </div>
             <div class="controls">
-              <button id="prev-frame">◀ Previous Frame</button>
-              <button id="play-pause">▶ Play / Pause</button>
-              <button id="next-frame">Next Frame ▶</button>
+              <button id="prev-frame" class="btn-secondary" disabled>◀ Previous Frame</button>
+              <button id="play-pause" class="btn-secondary" disabled>▶ Play / Pause</button>
+              <button id="next-frame" class="btn-secondary" disabled>Next Frame ▶</button>
             </div>
+            <div id="video-load-status" class="video-load-status" role="status"></div>
+            <div id="video-load-error" class="duplicate-frame-error" role="alert" hidden></div>
             <div id="capture-feedback" class="capture-feedback" aria-live="polite"></div>
-            <div id="duplicate-frame-error" class="duplicate-frame-error" role="alert" hidden></div>
+            <div id="video-csv-mismatch-error" class="duplicate-frame-error" role="alert" hidden></div>
           </div>
 
           <div class="below-video">
-            <section class="card overall-shot">
-              <h2>Overall Shot</h2>
-              <div class="assessment-block">
-                <h3>Overall Quality <span id="overall-quality-help" class="help-slot" hidden></span></h3>
-                <div id="overall-quality-options" class="quality-options" role="radiogroup" aria-label="Overall quality"></div>
-              </div>
-              <label class="field">
-                <span>Overall Notes</span>
-                <textarea id="overall-notes" rows="3" placeholder="Notes about the shot as a whole"></textarea>
-              </label>
+            <section class="card open-controls">
+              <input id="video-file" type="file" accept="video/*" hidden />
+              <input id="csv-file" type="file" accept=".csv,text/csv" hidden />
+              <button id="open-video" class="btn-primary">Open Video</button>
+              <button id="open-csv" class="btn-primary">Open Annotation CSV...</button>
+            </section>
+
+            <section class="card shots-nav-card">
+              <h2>Shots</h2>
+              <button id="add-shot" class="btn-primary btn-block" disabled>Add Shot at Current Frame</button>
+              <p id="shots-count" class="shots-count"></p>
+              <div id="shots-strip" class="shots-strip"></div>
+              <p id="shots-strip-empty" class="phase-empty">No shots yet.</p>
             </section>
 
             <section class="card session-panel">
@@ -61,93 +59,119 @@
                 <span>Annotator</span>
                 <input id="annotator" type="text" placeholder="Required for export" required />
               </label>
+              <label class="field">
+                <span>Default shot class for new shots</span>
+                <select id="default-shot-class"></select>
+              </label>
+              <label class="field">
+                <span>Default shot type for new shots</span>
+                <select id="default-shot-type"></select>
+              </label>
               <dl class="session-meta">
                 <div><dt>Video</dt><dd id="session-video">No video loaded</dd></div>
-                <div><dt>Profile</dt><dd id="session-profile">No profile loaded</dd></div>
-                <div><dt>Ontology</dt><dd id="session-ontology">—</dd></div>
+                <div><dt>Frame rate</dt><dd id="session-frame-rate">&mdash;</dd></div>
+                <div><dt>Annotation CSV</dt><dd id="session-csv">None (new annotation session)</dd></div>
               </dl>
-              <div id="export-status" class="export-status" role="status">Enter an annotator and record every phase to enable export.</div>
-              <button id="export-csv" class="primary" disabled>Export CSV</button>
+              <div id="export-status" class="export-status" role="status">Open a video to begin.</div>
+              <button id="export-csv" class="btn-primary btn-block" disabled>Save Annotation CSV</button>
             </section>
           </div>
         </section>
 
         <aside class="sidebar">
-          <section class="card progress-card">
-            <h2>Calibration Progress</h2>
-            <ul id="progress-list" class="progress-list"></ul>
-            <p id="progress-summary" class="progress-summary">0 of 0 phases recorded</p>
-          </section>
+          <section class="card shot-detail-card">
+            <div id="shot-detail-empty" class="phase-empty">Select a shot from the list to review it.</div>
+            <div id="shot-detail-body" hidden>
+              <div id="phase-card" class="phase-card" hidden>
+                <h4 id="phase-card-title" class="phase-name"></h4>
+                <p id="phase-card-description" class="phase-description"></p>
 
-          <section class="card phase-card">
-            <h2>Current Phase</h2>
-            <div id="phase-empty" class="phase-empty">Select a phase from Calibration Progress to begin.</div>
-            <div id="phase-body" hidden>
-              <div class="phase-name-row">
-                <h3 id="phase-name" class="phase-name"></h3>
-                <span id="phase-name-help" class="help-slot" hidden></span>
-              </div>
-              <p id="phase-description" class="phase-description"></p>
+                <div class="assessment-block">
+                  <h5>Phase Quality</h5>
+                  <div id="phase-quality-options" class="quality-options" role="radiogroup" aria-label="Phase quality"></div>
+                </div>
 
-              <div class="assessment-block">
-                <h3>Phase Quality <span id="phase-quality-help" class="help-slot" hidden></span></h3>
-                <div id="phase-quality-options" class="quality-options" role="radiogroup" aria-label="Phase quality"></div>
-              </div>
+                <div class="assessment-block">
+                  <h5>Observations</h5>
+                  <ul id="phase-observations-list" class="observations-list"></ul>
+                </div>
 
-              <div class="assessment-block">
-                <h3>Coaching Observations</h3>
-                <p class="profile-hint">
-                  Click an <span class="help-inline-glyph" aria-hidden="true">ⓘ</span> button to read its coaching description.
-                  <span id="rating-scale-help" class="help-slot" hidden></span>
-                </p>
-                <ul id="observations-list" class="observations-list"></ul>
+                <label class="field">
+                  <span>Phase Notes</span>
+                  <textarea id="phase-notes" rows="3" placeholder="Optional notes for this phase"></textarea>
+                </label>
+
+                <div class="phase-card-actions">
+                  <button id="phase-capture" class="btn-primary">Capture at Current Frame</button>
+                  <button id="phase-clear" class="btn-secondary">Clear</button>
+                </div>
               </div>
 
+              <section id="phase-progress-block" class="phase-progress-section">
+                <h2>Phase Progress</h2>
+                <ul id="phase-progress-list" class="progress-list"></ul>
+                <p id="phase-progress-summary" class="progress-summary">0 of 0 phases recorded</p>
+              </section>
+
+              <div id="phase-summary-block" class="assessment-block">
+                <h4>Phase Summary</h4>
+                <div id="phase-summary-list" class="phase-summary-list"></div>
+              </div>
+
+              <div id="overall-assessment-block" class="assessment-block" hidden>
+                <h4>Overall Assessment</h4>
+                <h5>Overall Quality</h5>
+                <div id="overall-quality-options" class="quality-options" role="radiogroup" aria-label="Overall quality"></div>
+                <label class="field">
+                  <span>Overall Notes</span>
+                  <textarea id="overall-notes" rows="3" placeholder="Notes about the shot as a whole"></textarea>
+                </label>
+              </div>
+
+              <h3>Shot Detail</h3>
+              <h4>Classification</h4>
               <label class="field">
-                <span>Phase Notes</span>
-                <textarea id="phase-notes" rows="3" placeholder="Optional notes for this phase"></textarea>
+                <span>Shot class</span>
+                <select id="shot-detail-shot-class"></select>
+              </label>
+              <label class="field">
+                <span>Shot type</span>
+                <select id="shot-detail-shot-type"></select>
+              </label>
+              <label class="field">
+                <span>Shot variant</span>
+                <select id="shot-detail-shot-variant"></select>
               </label>
 
-              <button id="save-phase" class="primary">Save Phase Assessment</button>
-            </div>
-          </section>
+              <h4>Resolved Profile</h4>
+              <div id="shot-detail-profile-empty" class="phase-empty">No coaching profile configured for this shot's classification.</div>
+              <div id="shot-detail-profile-body" hidden>
+                <p id="shot-detail-profile-name" class="profile-name"></p>
+                <p id="shot-detail-readiness" class="readiness-status"></p>
+              </div>
 
-          <section class="card recorded-card">
-            <h2>Recorded Assessments</h2>
-            <div class="table-wrap">
-              <table id="recorded-assessments">
-                <thead>
-                  <tr>
-                    <th>Frame</th>
-                    <th>Phase</th>
-                    <th>Quality</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
+              <dl class="shot-detail-meta">
+                <div><dt>Shot</dt><dd id="shot-detail-id"></dd></div>
+                <div><dt>Source</dt><dd id="shot-detail-source"></dd></div>
+                <div><dt>Automated estimate</dt><dd id="shot-detail-automated-frame"></dd></div>
+                <div><dt>Confidence</dt><dd id="shot-detail-confidence"></dd></div>
+                <div><dt>Contributing providers</dt><dd id="shot-detail-providers"></dd></div>
+                <div><dt>Review flags</dt><dd id="shot-detail-review-flags"></dd></div>
+                <div><dt>Reviewed frame</dt><dd id="shot-detail-reviewed-frame"></dd></div>
+                <div><dt>Review status</dt><dd id="shot-detail-status"></dd></div>
+              </dl>
+
+              <div class="shot-detail-actions">
+                <button id="done-editing" class="btn-secondary btn-compact">Done Editing</button>
+                <button id="shot-delete" class="btn-danger">Delete Shot</button>
+                <button id="save-shot" class="btn-primary" disabled>Save Shot</button>
+              </div>
             </div>
           </section>
         </aside>
       </main>
     </div>
 
-    <div id="export-confirm" class="modal-overlay" hidden>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="export-confirm-title">
-        <h2 id="export-confirm-title">Export Calibration Data</h2>
-        <dl class="export-summary" id="export-summary"></dl>
-        <div class="export-phase-checklist">
-          <h3>Recorded Phases</h3>
-          <ul id="export-phase-list"></ul>
-        </div>
-        <div class="modal-actions">
-          <button id="export-cancel">Cancel</button>
-          <button id="export-confirm-button" class="primary">Export CSV</button>
-        </div>
-      </div>
-    </div>
-
     <script type="module" src="app.js"></script>
   </body>
 </html>
-

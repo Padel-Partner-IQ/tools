@@ -35,19 +35,17 @@ button:disabled { cursor: not-allowed; opacity: 0.6; transform: none; box-shadow
 }
 
 .topbar-identity h1 { margin: 0; font-size: 1.35rem; }
-.topbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-.profile-banner {
+.video-banner {
   margin-top: 8px;
   display: flex;
   align-items: baseline;
   gap: 12px;
   flex-wrap: wrap;
 }
-.profile-banner #profile-name { font-weight: 600; font-size: 1.05rem; }
-.profile-banner #profile-shot-type { color: #9ca3af; font-size: 0.95rem; }
-.profile-banner .profile-versions { color: #6b7280; font-size: 0.85rem; }
-.profile-banner .profile-empty { color: #cbd5e1; font-style: italic; }
+.video-banner #video-name { font-weight: 600; font-size: 1.05rem; }
+.video-banner #video-frame-rate { color: #9ca3af; font-size: 0.95rem; }
+.video-banner .profile-empty { color: #cbd5e1; font-style: italic; }
 
 /* ---------------------------------------------------------------- Layout */
 
@@ -59,8 +57,11 @@ button:disabled { cursor: not-allowed; opacity: 0.6; transform: none; box-shadow
   align-items: start;
 }
 
-.video-column { display: flex; flex-direction: column; gap: 16px; }
-.below-video { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+/* Sticky so the video stays visible beside the phase editor while the taller
+   sidebar (shot list + shot detail + phase editor) scrolls past it. */
+.video-column { display: flex; flex-direction: column; gap: 16px; position: sticky; top: 20px; align-self: start; }
+.below-video { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.open-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .sidebar { display: flex; flex-direction: column; gap: 16px; }
 
 .video-panel, .card {
@@ -70,7 +71,6 @@ button:disabled { cursor: not-allowed; opacity: 0.6; transform: none; box-shadow
 }
 
 .card h2 { margin: 0 0 12px; font-size: 1.1rem; }
-.card h3 { margin: 0 0 6px; font-size: 0.95rem; color: #e5e7eb; }
 .card > :last-child { margin-bottom: 0; }
 
 video {
@@ -88,29 +88,79 @@ video {
   margin-top: 12px;
 }
 
-.controls button, #open-video, #load-profile, #save-phase, #export-csv,
-.modal-actions button {
+/* ------------------------------------------------------- Shared button styles
+   One small, reused set of button classes so every action across the app --
+   Open Video/CSV, transport controls, Capture/Clear, Save Shot, Done
+   Editing, Accept/Mark as False Detection/Delete Shot, Export -- shares the
+   same shape, sizing and states. Hover/active/focus-visible/disabled are
+   already handled once, globally, above (lines 11-15) for every <button>
+   regardless of class. */
+
+.btn-primary, .btn-secondary, .btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid transparent;
   border-radius: 999px;
-  padding: 10px 14px;
-  background: #374151;
-  color: white;
+  padding: 10px 16px;
+  font-weight: 600;
+  line-height: 1.2;
 }
-.primary { background: #2563eb !important; }
+.btn-primary { background: #2563eb; color: white; }
+.btn-secondary { background: #374151; color: white; border-color: #4b5563; }
+/* font-weight intentionally matches .btn-primary/.btn-secondary (600) --
+   danger buttons stay "restrained" via colour (transparent fill, red
+   outline) only, never by using different button typography than the rest
+   of the app. */
+.btn-danger { background: transparent; border-color: #dc2626; color: #fca5a5; }
+.btn-danger:hover:not(:disabled) { background: rgba(220, 38, 38, 0.12); }
+.btn-compact { padding: 6px 12px; font-size: 0.85rem; }
+.btn-block { width: 100%; }
 
-#save-phase, #export-csv { margin-top: 12px; width: 100%; }
-
-.table-wrap { overflow: auto; }
-table { width: 100%; border-collapse: collapse; }
-th, td { padding: 8px; text-align: left; border-bottom: 1px solid #374151; font-size: 0.92rem; }
-.actions button { margin-right: 6px; padding: 4px 10px; border-radius: 8px; background: #374151; border: 1px solid transparent; color: white; }
 .field { flex-direction: column; align-items: stretch; }
 .field > span { font-size: 0.9rem; color: #cbd5e1; margin-bottom: 4px; }
 textarea, select, input { border-radius: 10px; border: 1px solid #4b5563; padding: 8px; background: #111827; color: white; }
-.profile-hint { margin: 0 0 8px; color: #9ca3af; font-size: 0.9rem; }
-.assessment-block { margin-bottom: 14px; }
 
-/* ---------------------------------------------------- Quality option groups */
+/* ------------------------------------------------------- Video load status */
+
+.video-load-status { min-height: 1.2rem; margin-top: 10px; color: #9ca3af; font-size: 0.9rem; }
+.video-load-status:empty { margin-top: 0; }
+
+/* ------------------------------------------------------- Resolved profile */
+
+.profile-name { font-weight: 600; margin: 0 0 8px; }
+.readiness-status { margin: 0 0 12px; font-size: 0.85rem; color: #9ca3af; }
+.readiness-status.progress-complete { color: #86efac; font-weight: 600; }
+
+.assessment-block { margin-bottom: 14px; }
+.assessment-block h4 { margin: 0 0 8px; font-size: 0.95rem; }
+.assessment-block h5 { margin: 0 0 6px; font-size: 0.85rem; color: #cbd5e1; }
+
+/* ------------------------------------------------------- Phase progress + phase card */
+
+.phase-status {
+  flex: 1;
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #e5e7eb;
+  text-align: left;
+}
+.phase-status:hover:not(:disabled) { background: rgba(255,255,255,0.05); }
+.progress-item.active .phase-status { background: rgba(37, 99, 235, 0.18); border-color: #2563eb; }
+.phase-status.captured { border-left: 3px solid #86efac; }
+.phase-status.pending { border-left: 3px solid #6b7280; }
+
+.progress-complete { color: #86efac; font-weight: 600; }
+
+.phase-card { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.phase-name { font-size: 1.05rem; color: #f9fafb; margin: 0 0 4px; }
+.phase-description { color: #9ca3af; font-size: 0.9rem; margin: 0 0 12px; }
+.phase-card-actions { display: flex; gap: 8px; margin-top: 12px; }
+.phase-card-actions button { flex: 1; }
 
 .quality-options { display: flex; flex-wrap: wrap; gap: 8px; }
 .quality-option {
@@ -128,8 +178,6 @@ textarea, select, input { border-radius: 10px; border: 1px solid #4b5563; paddin
   font-weight: 600;
 }
 
-/* ------------------------------------------------------- Observations list */
-
 .observations-list { list-style: none; margin: 0; padding: 0; }
 .observation-row {
   display: flex;
@@ -139,56 +187,10 @@ textarea, select, input { border-radius: 10px; border: 1px solid #4b5563; paddin
   padding: 6px 0;
   border-bottom: 1px solid rgba(255,255,255,0.08);
 }
-.observation-row .observation-label { flex: 1; display: inline-flex; align-items: center; gap: 6px; }
+.observation-row .observation-label { flex: 1; }
 .observation-row select { min-width: 160px; }
 
-/* ------------------------------------------------- Help buttons + popover */
-
-.help-slot { display: inline-flex; align-items: center; margin-left: 6px; vertical-align: middle; }
-.help-slot[hidden] { display: none; }
-.help-inline-glyph { color: #93c5fd; }
-
-.help-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid #6b7280;
-  background: #111827;
-  color: #cbd5e1;
-  font-size: 0.8rem;
-  line-height: 1;
-  flex: none;
-}
-.help-button:hover:not(:disabled) { border-color: #93c5fd; color: #e5e7eb; }
-.help-button:disabled { opacity: 0.35; cursor: default; }
-
-.help-popover {
-  position: fixed;
-  z-index: 1000;
-  max-width: 340px;
-  background: #0b1220;
-  color: #e5e7eb;
-  border: 1px solid #4b5563;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 0.85rem;
-  line-height: 1.45;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
-  white-space: pre-line;
-}
-.help-popover[hidden] { display: none; }
-
-.progress-list li.progress-row { display: flex; align-items: center; gap: 6px; }
-.progress-list .progress-item { flex: 1; }
-
-.phase-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.phase-name-row .phase-name { margin: 0; }
-
-/* ------------------------------------------------------- Progress card */
+/* ------------------------------------------------------- Progress list (phase progress) */
 
 .progress-list { list-style: none; margin: 0 0 8px; padding: 0; }
 .progress-item {
@@ -196,35 +198,88 @@ textarea, select, input { border-radius: 10px; border: 1px solid #4b5563; paddin
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: transparent;
-  color: #e5e7eb;
-  text-align: left;
 }
-.progress-item:hover:not(:disabled) { background: rgba(255,255,255,0.05); }
-.progress-item.active { background: rgba(37, 99, 235, 0.18); border-color: #2563eb; }
-.progress-item .status-icon { width: 18px; text-align: center; font-weight: 700; }
-.progress-item.captured .status-icon { color: #86efac; }
-.progress-item.active .status-icon { color: #93c5fd; }
-.progress-item.pending .status-icon { color: #6b7280; }
-.progress-item .phase-label { flex: 1; }
-.progress-item .shortcut-hint {
-  font-size: 0.75rem;
-  color: #9ca3af;
-  border: 1px solid #4b5563;
-  border-radius: 6px;
-  padding: 1px 6px;
-}
-.progress-summary { margin: 0; color: #9ca3af; font-size: 0.9rem; }
-.progress-complete { color: #86efac; font-weight: 600; }
 
-/* ------------------------------------------------------- Phase card */
+.progress-summary { margin: 0; color: #9ca3af; font-size: 0.9rem; }
+
+/* Phase Progress is a distinct section below the active phase editor, not
+   another assessment-block -- extra top margin plus a divider set it apart
+   from the Capture/Clear actions above it, matching the heading weight
+   (h2, via the shared .card h2 rule) of a top-level panel section. */
+.phase-progress-section { margin-top: 24px; padding-top: 16px; border-top: 1px solid rgba(255, 255, 255, 0.08); margin-bottom: 14px; }
+
+/* ------------------------------------------------------- Shot detail card */
 
 .phase-empty { color: #9ca3af; font-style: italic; }
-.phase-name { font-size: 1.05rem; color: #f9fafb; margin: 0 0 4px; }
-.phase-description { color: #9ca3af; font-size: 0.9rem; margin: 0 0 12px; }
+
+.shot-detail-meta { margin: 0 0 12px; display: grid; gap: 6px; }
+.shot-detail-meta > div { display: flex; justify-content: space-between; gap: 8px; }
+.shot-detail-meta dt { color: #9ca3af; font-size: 0.85rem; margin: 0; }
+.shot-detail-meta dd { margin: 0; font-size: 0.85rem; text-align: right; word-break: break-word; }
+
+/* Done Editing, Delete Shot and Save Shot are the shot's lifecycle actions,
+   grouped together at the very bottom of Shot Detail. Each keeps its own
+   existing style (btn-secondary/btn-compact, btn-danger, btn-primary) --
+   colour/weight is the only difference, none stretches or gains a bespoke
+   variant. */
+.shot-detail-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ------------------------------------------------------- Phase summary
+   Compact, read-only -- one row per configured phase (frame, quality), see
+   renderPhaseSummary. Not an editing surface, so no border/background/
+   hover states, just tabular alignment. */
+
+.phase-summary-list { display: flex; flex-direction: column; gap: 4px; }
+.phase-summary-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 0.85rem;
+  padding: 2px 0;
+}
+.phase-summary-label { color: #e5e7eb; }
+.phase-summary-frame { color: #9ca3af; text-align: right; min-width: 44px; }
+.phase-summary-quality { color: #cbd5e1; text-align: right; min-width: 90px; }
+
+/* ------------------------------------------------------- Shots strip
+   Every shot in the session, complete or not (see renderShotsStrip) -- a
+   left border accent plus an explicit "Ready"/"Incomplete" word carries the
+   status distinction, so it never depends on colour alone. A clip can carry
+   ~70 shots, so the chip list is height-bounded to roughly 2-3 rows and
+   scrolls internally -- Add Shot and the count line above it stay fixed and
+   visible rather than being pushed down the page. */
+
+.shots-count { margin: 12px 0 0; color: #9ca3af; font-size: 0.85rem; }
+.shots-count:empty { margin: 0; }
+.shots-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  max-height: 132px;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+.shot-chip {
+  border: 1px solid #4b5563;
+  border-left-width: 3px;
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: #111827;
+  color: #e5e7eb;
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
+}
+.shot-chip.ready { border-left-color: #86efac; }
+.shot-chip.incomplete { border-left-color: #6b7280; }
+.shot-chip.selected {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: white;
+  font-weight: 600;
+}
 
 /* ------------------------------------------------------- Session panel */
 
@@ -235,7 +290,14 @@ textarea, select, input { border-radius: 10px; border: 1px solid #4b5563; paddin
 
 /* ------------------------------------------------------- Feedback + error */
 
-.capture-feedback { min-height: 1.2rem; margin-top: 12px; color: #86efac; font-weight: 600; }
+/* Blocking/failed actions must read as errors (red), never the same green
+   as a genuine success -- see showFeedback(message, type) in app.js.
+   'info' is a neutral heads-up (e.g. a harmless CSV/video filename
+   mismatch), distinct from both. */
+.capture-feedback { min-height: 1.2rem; margin-top: 12px; font-weight: 600; color: #9ca3af; }
+.capture-feedback.success { color: #86efac; }
+.capture-feedback.error { color: #fca5a5; }
+.capture-feedback.info { color: #9ca3af; font-weight: 500; }
 .capture-feedback.visible { opacity: 1; }
 
 .duplicate-frame-error {
@@ -249,49 +311,14 @@ textarea, select, input { border-radius: 10px; border: 1px solid #4b5563; paddin
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  white-space: pre-line;
 }
-.duplicate-frame-error .error-icon { font-size: 1.1rem; line-height: 1.2; }
 .duplicate-frame-error[hidden] { display: none; }
 
 .export-status { margin-top: 12px; margin-bottom: 8px; font-size: 0.92rem; color: #fbbf24; }
 .export-status.error { color: #fca5a5; }
 .export-status.success { color: #86efac; }
 
-/* ------------------------------------------------------- Export modal */
-
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 50;
-  padding: 20px;
-}
-.modal-overlay[hidden] { display: none; }
-.modal {
-  background: #1f2937;
-  border-radius: 16px;
-  padding: 24px;
-  width: min(480px, 100%);
-  max-height: 90vh;
-  overflow: auto;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-}
-.modal h2 { margin: 0 0 16px; }
-.export-summary { margin: 0 0 16px; display: grid; gap: 6px; }
-.export-summary > div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #374151; padding-bottom: 4px; }
-.export-summary dt { color: #9ca3af; font-size: 0.9rem; margin: 0; }
-.export-summary dd { margin: 0; font-weight: 600; text-align: right; }
-.export-phase-checklist h3 { margin: 0 0 8px; }
-.export-phase-checklist ul { list-style: none; margin: 0 0 16px; padding: 0; }
-.export-phase-checklist li { padding: 4px 0; }
-.export-phase-checklist li.recorded { color: #86efac; }
-.export-phase-checklist li.missing { color: #fca5a5; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-
 @media (max-width: 1100px) {
   .workspace { grid-template-columns: 1fr; }
-  .below-video { grid-template-columns: 1fr; }
 }

@@ -1,0 +1,80 @@
+{
+  "schema_version": "1",
+  "registry_id": "padel_partner_iq_annotation_profiles",
+  "registry_version": "1.0.0",
+  "description": "Maps classifications to coaching profiles. The resolver selects the most specific enabled match: class+type+variant, then class+type, then class.",
+  "resolution": {
+    "order": [
+      [
+        "shot_class",
+        "shot_type",
+        "shot_variant"
+      ],
+      [
+        "shot_class",
+        "shot_type"
+      ],
+      [
+        "shot_class"
+      ]
+    ],
+    "on_no_match": "allow_classification_without_profile"
+  },
+  "profiles": [
+    {
+      "profile_id": "groundstroke_forehand",
+      "enabled": true,
+      "status": "production",
+      "match": {
+        "shot_class": "groundstroke",
+        "shot_type": "forehand",
+        "shot_variant": null
+      },
+      "file": "shot_profiles/groundstroke_forehand.json"
+    },
+    {
+      "profile_id": "groundstroke_backhand",
+      "enabled": true,
+      "status": "production",
+      "match": {
+        "shot_class": "groundstroke",
+        "shot_type": "backhand",
+        "shot_variant": null
+      },
+      "file": "shot_profiles/groundstroke_backhand.json"
+    },
+    {
+      "profile_id": "overhead_bandeja",
+      "enabled": false,
+      "status": "example",
+      "match": {
+        "shot_class": "overhead",
+        "shot_type": "bandeja",
+        "shot_variant": null
+      },
+      "file": "shot_profiles/overhead_bandeja.example.json"
+    },
+    {
+      "profile_id": "overhead_vibora",
+      "enabled": false,
+      "status": "example",
+      "match": {
+        "shot_class": "overhead",
+        "shot_type": "vibora",
+        "shot_variant": null
+      },
+      "file": "shot_profiles/overhead_vibora.example.json"
+    },
+    {
+      "profile_id": "overhead_smash",
+      "enabled": false,
+      "status": "example",
+      "match": {
+        "shot_class": "overhead",
+        "shot_type": "smash",
+        "shot_variant": null
+      },
+      "file": "shot_profiles/overhead_smash.example.json"
+    }
+  ]
+}

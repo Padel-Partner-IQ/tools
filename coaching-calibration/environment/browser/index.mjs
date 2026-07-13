@@ -71,5 +71,16 @@ export function createBrowserEnvironment(globalObject = window) {
 
       saveWithDownload(globalObject, request);
     },
+
+    // No native path-based file picker or ffprobe sidecar in browser mode --
+    // app.js falls back to the existing <input type="file"> video picker and
+    // an explicit frame-rate confirmation prompt (never a silent 30fps default).
+    async pickVideoFile() {
+      return null;
+    },
+
+    async probeVideoFrameRate() {
+      return null;
+    },
   };
 }

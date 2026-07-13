@@ -1,12 +1,12 @@
 {
   "version": "0.1.0",
-  "git_commit": "6eec17d60395",
-  "git_branch": "main",
+  "git_commit": "2693e0043d37",
+  "git_branch": "feature/contact",
   "git_dirty": false,
-  "build_date": "2026-07-07T11:50:50.709Z",
+  "build_date": "2026-07-13T08:02:26.174Z",
   "tools": [
     {
-      "title": "Coach Calibration Workbench",
+      "title": "Annotation Workbench",
       "slug": "coaching-calibration",
       "status": "available"
     },

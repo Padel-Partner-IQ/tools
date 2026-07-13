@@ -1,11 +1,42 @@
 {
-  "profile_id": "forehand_phase_calibration",
+  "schema_version": "2",
+  "profile_id": "groundstroke_forehand",
   "profile_version": "1.0.0",
-  "profile_name": "Forehand Phase Calibration",
+  "profile_name": "Forehand Groundstroke",
   "description": "Calibration workflow for forehand groundstroke phase labelling, phase-level quality assessment, overall shot assessment, and structured coaching observations.",
-  "shot_type": "Forehand",
-  "ontology_id": "padel_partner_iq_coaching_ontology",
-  "ontology_version": "1.0.0",
+  "classification": {
+    "shot_class": {
+      "id": "groundstroke",
+      "label": "Groundstroke"
+    },
+    "shot_type": {
+      "id": "forehand",
+      "label": "Forehand"
+    },
+    "shot_variant": null
+  },
+  "vocabulary": {
+    "phases": {
+      "id": "padel_partner_iq_calibration_phases",
+      "version": "1.0.0",
+      "file": "../phases.json"
+    },
+    "observations": {
+      "id": "padel_partner_iq_coaching_observations",
+      "version": "1.0.0",
+      "file": "../observations.json"
+    },
+    "ratings": {
+      "id": "padel_partner_iq_rating_scale",
+      "version": "1.0.0",
+      "file": "../ratings.json"
+    },
+    "quality_assessments": {
+      "id": "padel_partner_iq_quality_assessment_scale",
+      "version": "1.0.0",
+      "file": "../quality_assessments.json"
+    }
+  },
   "phases": [
     {
       "id": "ready_position",

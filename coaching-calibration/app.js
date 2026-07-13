@@ -1,950 +1,1374 @@
-import { deriveVideoId } from './video_id.mjs';
-import { canExportCalibration, getMissingLabelEntries, isQualitySelected } from './validation.mjs';
-import { buildCsvHeaders, buildExportRows, createSessionMetadata, getProfileId, resolveOntologyVersion } from './export_metadata.mjs';
-import { buildExportFilename } from './export_filename.mjs';
-import { buildFrameInUseErrorMessage, findFrameOwner, resolveCaptureFrame } from './duplicate_frame.mjs';
-import {
-  buildPhaseViewModels,
-  buildQualityOptions,
-  buildRatingOptions,
-  createProfileBannerState,
-  getProfileVersion,
-  normalizeProfile,
-  resolveDefaultProfilePath,
-} from './profile_state.mjs';
-import { getOntologyVersion, getQualityMeta, getRatingMeta, loadOntology, normalizeOntology } from './ontology.mjs';
-import { isEditableTarget } from './keyboard_shortcuts.mjs';
+// Annotation Workbench -- main UI/session controller.
+//
+// A video is simply a collection of shots. This app reads/writes exactly one
+// data model, the canonical Annotation CSV (see annotation_csv.mjs), whether
+// it started from automated detection, a coach reviewing it, or a coach
+// starting from an empty session and adding shots manually. There is no
+// separate "manual annotation format".
+//
+// Following this project's established testing convention, all non-trivial
+// logic lives in pure, framework-free modules (annotation_csv.mjs,
+// annotation_model.mjs, video_metadata.mjs, video_probe_browser.mjs,
+// profile_resolution.mjs) that are unit tested directly; this file is thin
+// DOM wiring around them, characterization-tested via tests/app_behavior.test.mjs.
+
 import { createEnvironment, describeEnvironmentError } from './environment/index.mjs';
-
-// ---------------------------------------------------------------- DOM refs
-
-const video = document.getElementById('video');
-const frameNumberEl = document.getElementById('frame-number');
-const timestampEl = document.getElementById('timestamp');
-const captureFeedbackEl = document.getElementById('capture-feedback');
-const duplicateFrameErrorEl = document.getElementById('duplicate-frame-error');
-
-const profileNameEl = document.getElementById('profile-name');
-const profileShotTypeEl = document.getElementById('profile-shot-type');
-const profileVersionsEl = document.getElementById('profile-versions');
-const sessionVideoEl = document.getElementById('session-video');
-const sessionProfileEl = document.getElementById('session-profile');
-const sessionOntologyEl = document.getElementById('session-ontology');
-
-const overallQualityOptionsEl = document.getElementById('overall-quality-options');
-const overallNotesEl = document.getElementById('overall-notes');
-const annotatorEl = document.getElementById('annotator');
-const exportStatusEl = document.getElementById('export-status');
-const exportButtonEl = document.getElementById('export-csv');
-
-const progressListEl = document.getElementById('progress-list');
-const progressSummaryEl = document.getElementById('progress-summary');
-
-const phaseEmptyEl = document.getElementById('phase-empty');
-const phaseBodyEl = document.getElementById('phase-body');
-const phaseNameEl = document.getElementById('phase-name');
-const phaseDescriptionEl = document.getElementById('phase-description');
-const phaseQualityOptionsEl = document.getElementById('phase-quality-options');
-const observationsListEl = document.getElementById('observations-list');
-const phaseNotesEl = document.getElementById('phase-notes');
-const savePhaseButtonEl = document.getElementById('save-phase');
-
-const recordedBody = document.querySelector('#recorded-assessments tbody');
-
-const profileInputEl = document.getElementById('profile-file');
-const videoFileInputEl = document.getElementById('video-file');
-const loadProfileButtonEl = document.getElementById('load-profile');
-
-const exportConfirmEl = document.getElementById('export-confirm');
-const exportSummaryEl = document.getElementById('export-summary');
-const exportPhaseListEl = document.getElementById('export-phase-list');
-const exportCancelEl = document.getElementById('export-cancel');
-const exportConfirmButtonEl = document.getElementById('export-confirm-button');
+import { isEditableTarget } from './keyboard_shortcuts.mjs';
+import { deriveVideoId } from './video_id.mjs';
+import {
+  AnnotationValidationError,
+  buildAnnotationCsvText,
+  createAnnotationRunMetadata,
+  newSessionId,
+  parseAnnotationCsv,
+  validateAnnotationRows,
+} from './annotation_csv.mjs';
+import {
+  canDeleteShot,
+  createManualShot,
+  deleteShot,
+  effectiveContactFrame,
+  findDuplicateContactFrame,
+  renumberShotIndices,
+} from './annotation_model.mjs';
+import {
+  compareVideoIdentity,
+  deriveRealVideoMetadata,
+  extractCsvVideoMetadata,
+  formatFrameRateLabel,
+  parseVideoMetadataFromFfprobeJson,
+} from './video_metadata.mjs';
+import { probeVideoMetadataInBrowser } from './video_probe_browser.mjs';
+import { buildPhaseViewModels, buildRatingOptions, buildQualityOptions } from './profile_state.mjs';
+import { resolveProfileForShot } from './profile_resolution.mjs';
+import { loadOntology, getQualityMeta } from './ontology.mjs';
+import {
+  loadTaxonomy,
+  getClasses,
+  getTypesForClass,
+  getVariantsForType,
+  getDefaultClassId,
+  getDefaultTypeId,
+  classificationIdsForShot,
+  classificationLabelsForIds,
+  reconcileClassSelection,
+  reconcileTypeSelection,
+} from './classification_taxonomy.mjs';
+import { loadRegistry, loadRegisteredProfiles, ProfileRegistryValidationError } from './profile_registry.mjs';
+import { getPhaseFrame } from './phase_frame_mapping.mjs';
+import { getPhaseAssessment, capturePhaseFrame, clearPhase, isPhaseCaptured } from './phase_assessment.mjs';
+import { findPhaseFrameOwner, buildFrameInUseErrorMessage } from './duplicate_frame.mjs';
+import { computeShotReadiness } from './shot_readiness.mjs';
 
 const environment = createEnvironment(window);
 
-// ---------------------------------------------------------------- State
+// A load sequence (video src assignment + metadata probe) that hasn't
+// resolved within this window is treated as failed -- the app must always
+// reach a terminal loaded/failed state, never spin indefinitely.
+const VIDEO_LOAD_TIMEOUT_MS = 20000;
 
-let ontology = normalizeOntology({});
-let activeProfile = normalizeProfile(null);
-let phaseViewModels = [];
-let qualityOptions = [];
-let ratingOptions = [];
+// ---------------------------------------------------------------------------
+// Elements
+// ---------------------------------------------------------------------------
 
-let activePhaseId = null;
-let perPhaseWorking = {};
-let capturedEntries = [];
-let overallQuality = '';
-let overallNotes = '';
-let editingEntryId = null;
+const video = document.getElementById('video');
+const videoFileInput = document.getElementById('video-file');
+const csvFileInput = document.getElementById('csv-file');
+const openVideoButton = document.getElementById('open-video');
+const openCsvButton = document.getElementById('open-csv');
+const videoNameEl = document.getElementById('video-name');
+const videoFrameRateEl = document.getElementById('video-frame-rate');
+const videoLoadStatusEl = document.getElementById('video-load-status');
+const videoLoadErrorEl = document.getElementById('video-load-error');
 
-let videoFileName = 'Untitled Video';
-let currentFrame = 0;
+const frameNumberEl = document.getElementById('frame-number');
+const timestampEl = document.getElementById('timestamp');
+const prevFrameButton = document.getElementById('prev-frame');
+const playPauseButton = document.getElementById('play-pause');
+const nextFrameButton = document.getElementById('next-frame');
+const captureFeedbackEl = document.getElementById('capture-feedback');
+const mismatchErrorEl = document.getElementById('video-csv-mismatch-error');
+
+const annotatorEl = document.getElementById('annotator');
+const defaultShotClassEl = document.getElementById('default-shot-class');
+const defaultShotTypeEl = document.getElementById('default-shot-type');
+const sessionVideoEl = document.getElementById('session-video');
+const sessionFrameRateEl = document.getElementById('session-frame-rate');
+const sessionCsvEl = document.getElementById('session-csv');
+const exportStatusEl = document.getElementById('export-status');
+const exportButton = document.getElementById('export-csv');
+
+const addShotButton = document.getElementById('add-shot');
+
+const shotsCountEl = document.getElementById('shots-count');
+const shotsStripEl = document.getElementById('shots-strip');
+const shotsStripEmptyEl = document.getElementById('shots-strip-empty');
+
+const doneEditingButton = document.getElementById('done-editing');
+const shotDetailEmptyEl = document.getElementById('shot-detail-empty');
+const shotDetailBodyEl = document.getElementById('shot-detail-body');
+const shotDetailIdEl = document.getElementById('shot-detail-id');
+const shotDetailSourceEl = document.getElementById('shot-detail-source');
+const shotDetailAutomatedFrameEl = document.getElementById('shot-detail-automated-frame');
+const shotDetailConfidenceEl = document.getElementById('shot-detail-confidence');
+const shotDetailProvidersEl = document.getElementById('shot-detail-providers');
+const shotDetailReviewFlagsEl = document.getElementById('shot-detail-review-flags');
+const shotDetailReviewedFrameEl = document.getElementById('shot-detail-reviewed-frame');
+const shotDetailStatusEl = document.getElementById('shot-detail-status');
+const shotDeleteButton = document.getElementById('shot-delete');
+
+const shotDetailShotClassEl = document.getElementById('shot-detail-shot-class');
+const shotDetailShotTypeEl = document.getElementById('shot-detail-shot-type');
+const shotDetailShotVariantEl = document.getElementById('shot-detail-shot-variant');
+const shotDetailProfileEmptyEl = document.getElementById('shot-detail-profile-empty');
+const shotDetailProfileBodyEl = document.getElementById('shot-detail-profile-body');
+const shotDetailProfileNameEl = document.getElementById('shot-detail-profile-name');
+const shotDetailReadinessEl = document.getElementById('shot-detail-readiness');
+const phaseSummaryListEl = document.getElementById('phase-summary-list');
+const phaseSummaryBlockEl = document.getElementById('phase-summary-block');
+
+const phaseProgressListEl = document.getElementById('phase-progress-list');
+const phaseProgressSummaryEl = document.getElementById('phase-progress-summary');
+const phaseProgressBlockEl = document.getElementById('phase-progress-block');
+const phaseCardEl = document.getElementById('phase-card');
+const phaseCardTitleEl = document.getElementById('phase-card-title');
+const phaseCardDescriptionEl = document.getElementById('phase-card-description');
+const phaseObservationsListEl = document.getElementById('phase-observations-list');
+const phaseQualityOptionsEl = document.getElementById('phase-quality-options');
+const phaseNotesEl = document.getElementById('phase-notes');
+const phaseCaptureButton = document.getElementById('phase-capture');
+const phaseClearButton = document.getElementById('phase-clear');
+
+const overallAssessmentBlockEl = document.getElementById('overall-assessment-block');
+const overallQualityOptionsEl = document.getElementById('overall-quality-options');
+const overallNotesEl = document.getElementById('overall-notes');
+const saveShotButton = document.getElementById('save-shot');
+
+// ---------------------------------------------------------------------------
+// Session state
+// ---------------------------------------------------------------------------
+
+let shots = [];
+let selectedShotId = null;
+let currentFrame = null;
 let currentVideoUrl = null;
-let sessionMetadata = createSessionMetadata();
-let activeProfileFileName = 'forehand_calibration_profile.json';
+let videoFileName = null;
+let realVideoMeta = null; // { video_id, video_filename, frame_rate_fps, video_metadata_provider, width, height, duration_sec } -- null until genuinely known, never defaults to 30fps
+let runMetadata = null; // AnnotationRunMetadata for newly created/edited rows this session
+let pendingCsvText = null; // raw CSV text opened before the video (or before its metadata was known)
+let csvLoaded = false; // whether an existing CSV backs this session, vs. a fresh Annotation Mode session
+let controlsEnabled = false; // editing/seeking gate -- false until frame rate is known and any loaded CSV has validated
+let videoLoadState = 'idle'; // 'idle' | 'loading' | 'loaded' | 'failed' -- the app must always reach a terminal state, never spin indefinitely
+let videoLoadError = null;
+let taxonomy = null; // normalized classification taxonomy (classification_taxonomy.mjs), loaded once at startup
+let profileIndex = new Map(); // classification-id key -> normalized coaching profile, built from the registry at startup (see profile_registry.mjs)
+let ontology = null; // normalized Coaching Ontology, loaded once at startup -- label/description lookups for phases/observations/ratings/quality
+let activePhaseId = null; // the currently selected shot's active phase in the phase editor
+let phaseWorking = {}; // phaseId -> { qualityId, notes, observations } draft for the currently selected shot's active phase(s)
 
-// ---------------------------------------------------------------- Help popover
-//
-// Coaching descriptions come from the ontology JSON files. Hover / native
-// tooltips proved unreliable in the packaged webview, so help is now explicit:
-// every helpable element has a visible info button (ⓘ). Clicking it opens a
-// popover showing the description. The buttons are real <button> elements, so
-// mouse click and keyboard (Enter / Space) both work reliably.
+// ---------------------------------------------------------------------------
+// Frame/time conversion -- always from the real, known frame rate
+// ---------------------------------------------------------------------------
 
-const helpPopoverEl = document.createElement('div');
-helpPopoverEl.className = 'help-popover';
-helpPopoverEl.setAttribute('role', 'dialog');
-helpPopoverEl.setAttribute('aria-label', 'Description');
-helpPopoverEl.hidden = true;
-document.body.appendChild(helpPopoverEl);
-
-let helpAnchorEl = null;
-
-function positionHelpPopover(anchor) {
-  const margin = 8;
-  const rect = anchor.getBoundingClientRect();
-  const popRect = helpPopoverEl.getBoundingClientRect();
-
-  // Prefer below the button; flip above when it would overflow the viewport.
-  let top = rect.bottom + margin;
-  if (top + popRect.height > window.innerHeight - margin) {
-    top = rect.top - popRect.height - margin;
-  }
-  if (top < margin) {
-    top = margin;
-  }
-
-  // Clamp horizontally within the viewport.
-  let left = rect.left;
-  const maxLeft = window.innerWidth - popRect.width - margin;
-  if (left > maxLeft) {
-    left = Math.max(margin, maxLeft);
-  }
-  if (left < margin) {
-    left = margin;
-  }
-
-  helpPopoverEl.style.top = `${top}px`;
-  helpPopoverEl.style.left = `${left}px`;
+function formatTimestamp(time) {
+  return `${time.toFixed(3)}s`;
 }
-
-function openHelpPopover(anchor, text) {
-  helpPopoverEl.textContent = text;
-  helpPopoverEl.hidden = false;
-  helpAnchorEl = anchor;
-  positionHelpPopover(anchor);
-}
-
-function closeHelpPopover() {
-  helpPopoverEl.hidden = true;
-  helpAnchorEl = null;
-}
-
-function toggleHelpPopover(anchor, text) {
-  if (!helpPopoverEl.hidden && helpAnchorEl === anchor) {
-    closeHelpPopover();
-  } else {
-    openHelpPopover(anchor, text);
-  }
-}
-
-// Create a visible, styled info button that reveals ontology help text on click.
-function createInfoButton(text, ariaLabel) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'help-button';
-  button.textContent = 'ⓘ';
-  button.setAttribute('aria-label', ariaLabel || 'Show description');
-  if (!text) {
-    button.disabled = true;
-    return button;
-  }
-  button.title = text; // harmless native fallback; the popover is the primary UI
-  button.addEventListener('click', (event) => {
-    event.stopPropagation();
-    toggleHelpPopover(button, text);
-  });
-  return button;
-}
-
-// Populate an inline help slot (a placeholder span in index.html) with a fresh
-// info button, or hide it when there is no description.
-function fillHelpSlot(slotId, text, ariaLabel) {
-  const slot = document.getElementById(slotId);
-  if (!slot) {
-    return;
-  }
-  slot.innerHTML = '';
-  if (!text) {
-    slot.hidden = true;
-    return;
-  }
-  slot.hidden = false;
-  slot.appendChild(createInfoButton(text, ariaLabel));
-}
-
-// Close the popover on outside click, Escape, or viewport resize.
-document.addEventListener('click', (event) => {
-  if (helpPopoverEl.hidden) {
-    return;
-  }
-  if (event.target.closest && event.target.closest('.help-button')) {
-    return;
-  }
-  closeHelpPopover();
-});
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !helpPopoverEl.hidden) {
-    closeHelpPopover();
-  }
-});
-window.addEventListener('resize', () => {
-  if (!helpPopoverEl.hidden && helpAnchorEl) {
-    positionHelpPopover(helpAnchorEl);
-  }
-});
-
-// Compose a rating-scale legend from the ontology so the meaning of each
-// observation rating is discoverable.
-function buildRatingLegend() {
-  const notAssessed = getRatingMeta(ontology, 'not_assessed');
-  const parts = [];
-  if (notAssessed.description) {
-    parts.push(`Not assessed: ${notAssessed.description}`);
-  }
-  ratingOptions.forEach((rating) => {
-    if (rating.description) {
-      parts.push(`${rating.label}: ${rating.description}`);
-    }
-  });
-  return parts.join('\n');
-}
-
-// Compose a quality-scale legend from the ontology for the quality controls.
-function buildQualityLegend() {
-  const notAssessed = getQualityMeta(ontology, 'not_assessed');
-  const parts = [];
-  if (notAssessed.description) {
-    parts.push(`Not assessed: ${notAssessed.description}`);
-  }
-  qualityOptions.forEach((quality) => {
-    if (quality.description) {
-      parts.push(`${quality.label}: ${quality.description}`);
-    }
-  });
-  return parts.join('\n');
-}
-
-// Populate the profile-level help slots (rating scale + overall quality) once a
-// profile and ontology are loaded.
-function renderProfileHelp() {
-  fillHelpSlot('rating-scale-help', buildRatingLegend(), 'Show observation rating scale');
-  fillHelpSlot('overall-quality-help', buildQualityLegend(), 'Show overall quality guidance');
-}
-
-// ---------------------------------------------------------------- Init
-
-async function loadInitial() {
-  try {
-    ontology = await loadOntology((resourceUrl) => environment.loadJsonResource(resourceUrl));
-  } catch (error) {
-    console.error('Unable to load the coaching ontology.', error);
-    ontology = normalizeOntology({});
-  }
-
-  try {
-    const data = await environment.loadJsonResource(resolveDefaultProfilePath());
-    applyProfile(data, 'forehand_calibration_profile.json');
-  } catch (error) {
-    console.error('Unable to load the default calibration profile.', error);
-    applyProfile(null, activeProfileFileName);
-  }
-}
-
-function applyProfile(profileData, profileFileName = activeProfileFileName) {
-  activeProfile = normalizeProfile(profileData);
-  activeProfileFileName = typeof profileFileName === 'string' && profileFileName.trim()
-    ? profileFileName
-    : activeProfileFileName;
-
-  phaseViewModels = buildPhaseViewModels(activeProfile, ontology);
-  qualityOptions = buildQualityOptions(activeProfile, ontology);
-  ratingOptions = buildRatingOptions(activeProfile, ontology);
-
-  // Reset assessment state when a new profile is applied.
-  perPhaseWorking = {};
-  capturedEntries = [];
-  overallQuality = '';
-  overallNotes = '';
-  editingEntryId = null;
-  activePhaseId = phaseViewModels.length > 0 ? phaseViewModels[0].id : null;
-
-  renderBanner(profileData ? { ...activeProfile, loaded: true } : null);
-  renderSessionMeta();
-  renderOverallQuality();
-  renderProfileHelp();
-  overallNotesEl.value = '';
-  renderProgress();
-  renderPhaseCard();
-  renderRecorded();
-  hideBlockingError();
-  updateExportState();
-}
-
-// ---------------------------------------------------------------- Banner + session
-
-function renderBanner(profile = null) {
-  const state = createProfileBannerState(profile ? { ...profile, loaded: true } : null);
-  profileNameEl.textContent = state.title;
-  profileShotTypeEl.textContent = state.subtitle;
-  profileNameEl.classList.toggle('profile-empty', !state.loaded);
-  profileShotTypeEl.classList.toggle('profile-empty', !state.loaded);
-  profileVersionsEl.textContent = state.loaded
-    ? `Profile v${state.profileVersion} · Ontology v${getOntologyVersion(ontology)}`
-    : '';
-}
-
-function renderSessionMeta() {
-  sessionVideoEl.textContent = videoFileName || 'No video loaded';
-  sessionProfileEl.textContent = activeProfile.phases.length > 0
-    ? `${activeProfile.profile_name} (v${getProfileVersion(activeProfile)})`
-    : 'No profile loaded';
-  sessionOntologyEl.textContent = `v${getOntologyVersion(ontology)}`;
-}
-
-// ---------------------------------------------------------------- Quality controls
-
-function renderQualityGroup(container, selectedId, onSelect) {
-  container.innerHTML = '';
-  if (qualityOptions.length === 0) {
-    const empty = document.createElement('span');
-    empty.className = 'profile-hint';
-    empty.textContent = 'No quality scale configured for this profile.';
-    container.appendChild(empty);
-    return;
-  }
-  qualityOptions.forEach((option) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'quality-option';
-    button.setAttribute('role', 'radio');
-    button.dataset.qualityId = option.id;
-    button.textContent = option.label;
-    const selected = option.id === selectedId;
-    button.classList.toggle('selected', selected);
-    button.setAttribute('aria-checked', selected ? 'true' : 'false');
-    button.addEventListener('click', () => onSelect(option.id));
-    container.appendChild(button);
-  });
-}
-
-function renderOverallQuality() {
-  renderQualityGroup(overallQualityOptionsEl, overallQuality, (id) => {
-    overallQuality = overallQuality === id ? '' : id;
-    renderOverallQuality();
-    updateExportState();
-  });
-}
-
-// ---------------------------------------------------------------- Working state
-
-function getWorkingState(phaseId) {
-  if (!perPhaseWorking[phaseId]) {
-    perPhaseWorking[phaseId] = { quality: '', notes: '', observations: {} };
-  }
-  return perPhaseWorking[phaseId];
-}
-
-// ---------------------------------------------------------------- Progress card
-
-function isPhaseCaptured(phaseId) {
-  return capturedEntries.some((entry) => entry.phase_id === phaseId);
-}
-
-function renderProgress() {
-  progressListEl.innerHTML = '';
-  phaseViewModels.forEach((phase) => {
-    const item = document.createElement('li');
-    item.className = 'progress-row';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'progress-item';
-    button.dataset.phaseId = phase.id;
-
-    const captured = isPhaseCaptured(phase.id);
-    const active = phase.id === activePhaseId;
-    button.classList.add(captured ? 'captured' : 'pending');
-    if (active) {
-      button.classList.add('active');
-    }
-
-    const icon = document.createElement('span');
-    icon.className = 'status-icon';
-    icon.textContent = captured ? '✓' : active ? '●' : '○';
-
-    const label = document.createElement('span');
-    label.className = 'phase-label';
-    label.textContent = phase.label;
-
-    button.appendChild(icon);
-    button.appendChild(label);
-
-    if (phase.shortcut) {
-      const shortcut = document.createElement('span');
-      shortcut.className = 'shortcut-hint';
-      shortcut.textContent = phase.shortcut;
-      button.appendChild(shortcut);
-    }
-
-    button.addEventListener('click', () => selectPhase(phase.id));
-    item.appendChild(button);
-    if (phase.description) {
-      item.appendChild(createInfoButton(phase.description, `Show ${phase.label} description`));
-    }
-    progressListEl.appendChild(item);
-  });
-
-  const capturedCount = phaseViewModels.filter((phase) => isPhaseCaptured(phase.id)).length;
-  const total = phaseViewModels.length;
-  if (total > 0 && capturedCount === total) {
-    progressSummaryEl.textContent = 'All phases recorded ✓';
-    progressSummaryEl.classList.add('progress-complete');
-  } else {
-    progressSummaryEl.textContent = `${capturedCount} of ${total} phases recorded`;
-    progressSummaryEl.classList.remove('progress-complete');
-  }
-}
-
-// ---------------------------------------------------------------- Phase card
-
-function selectPhase(phaseId) {
-  activePhaseId = phaseId;
-  // Selecting a phase from the progress list cancels any in-progress edit.
-  editingEntryId = null;
-  renderProgress();
-  renderPhaseCard();
-}
-
-function renderPhaseCard() {
-  const phase = phaseViewModels.find((entry) => entry.id === activePhaseId);
-  if (!phase) {
-    phaseEmptyEl.hidden = false;
-    phaseBodyEl.hidden = true;
-    return;
-  }
-
-  phaseEmptyEl.hidden = true;
-  phaseBodyEl.hidden = false;
-
-  phaseNameEl.textContent = phase.label;
-  phaseDescriptionEl.textContent = phase.description || '';
-  fillHelpSlot('phase-name-help', phase.description, `Show ${phase.label} description`);
-  fillHelpSlot('phase-quality-help', buildQualityLegend(), 'Show phase quality guidance');
-
-  const working = getWorkingState(phase.id);
-
-  renderQualityGroup(phaseQualityOptionsEl, working.quality, (id) => {
-    working.quality = working.quality === id ? '' : id;
-    renderPhaseCard();
-  });
-
-  renderObservations(phase, working);
-
-  phaseNotesEl.value = working.notes;
-
-  savePhaseButtonEl.textContent = editingEntryId
-    ? `Update ${phase.label} Assessment`
-    : `Save ${phase.label} Assessment`;
-}
-
-function renderObservations(phase, working) {
-  observationsListEl.innerHTML = '';
-  if (phase.observations.length === 0) {
-    const empty = document.createElement('li');
-    empty.className = 'profile-hint';
-    empty.textContent = 'No structured observations are configured for this phase.';
-    observationsListEl.appendChild(empty);
-    return;
-  }
-
-  const fragment = document.createDocumentFragment();
-  phase.observations.forEach((observation) => {
-    const item = document.createElement('li');
-    item.className = 'observation-row';
-
-    const labelWrap = document.createElement('span');
-    labelWrap.className = 'observation-label';
-
-    const labelText = document.createElement('span');
-    labelText.textContent = observation.label;
-    labelWrap.appendChild(labelText);
-
-    if (observation.description) {
-      labelWrap.appendChild(
-        createInfoButton(observation.description, `Show ${observation.label} description`),
-      );
-    }
-
-    const select = document.createElement('select');
-    select.dataset.observationId = observation.id;
-
-    const defaultOption = document.createElement('option');
-    defaultOption.value = 'not_assessed';
-    defaultOption.textContent = 'Not assessed';
-    select.appendChild(defaultOption);
-
-    ratingOptions.forEach((rating) => {
-      const option = document.createElement('option');
-      option.value = rating.id;
-      option.textContent = rating.label;
-      if (rating.description) {
-        option.title = rating.description;
-      }
-      select.appendChild(option);
-    });
-
-    select.value = working.observations[observation.id] || 'not_assessed';
-    select.addEventListener('change', (event) => {
-      working.observations[observation.id] = event.target.value;
-    });
-
-    item.appendChild(labelWrap);
-    item.appendChild(select);
-    fragment.appendChild(item);
-  });
-  observationsListEl.appendChild(fragment);
-}
-
-function buildStructuredObservations(phase, working) {
-  return phase.observations.reduce((result, observation) => {
-    const value = working.observations[observation.id];
-    if (value && value !== 'not_assessed') {
-      result[observation.id] = value;
-    }
-    return result;
-  }, {});
-}
-
-// ---------------------------------------------------------------- Save / edit / delete
-
-function savePhaseAssessment() {
-  const phase = phaseViewModels.find((entry) => entry.id === activePhaseId);
-  if (!phase) {
-    return;
-  }
-
-  updateFrameInfo();
-  const working = getWorkingState(phase.id);
-
-  // Phase Quality is a required coaching judgement.
-  if (!isQualitySelected(working.quality)) {
-    showBlockingError('Select a Phase Quality rating before saving this assessment.');
-    return;
-  }
-
-  // A frame may be used by at most one phase assessment. Editing re-saves at the
-  // current frame and is still subject to this check (its own entry excluded).
-  const frameForCapture = resolveCaptureFrame({
-    videoTime: video.currentTime,
-    currentFrame,
-    displayedFrame: frameNumberEl.textContent,
-  });
-
-  const owner = findFrameOwner(capturedEntries, frameForCapture, editingEntryId);
-  if (owner) {
-    showBlockingError(buildFrameInUseErrorMessage(frameForCapture, owner.phase_label));
-    return;
-  }
-  hideBlockingError();
-
-  const existing = editingEntryId
-    ? capturedEntries.find((entry) => entry.id === editingEntryId)
-    : null;
-
-  const structuredObservations = buildStructuredObservations(phase, working);
-  const timestamp = Number.isFinite(video.currentTime) ? video.currentTime.toFixed(3) : '0.000';
-
-  const entryData = {
-    video_id: deriveVideoId(videoFileName),
-    video_filename: videoFileName,
-    frame: frameForCapture,
-    timestamp_seconds: timestamp,
-    phase_id: phase.id,
-    phase_label: phase.label,
-    phase_quality: working.quality || '',
-    annotator: annotatorEl.value.trim(),
-    notes: phaseNotesEl.value.trim(),
-    structured_observations: structuredObservations,
-  };
-
-  const wasEditing = Boolean(editingEntryId);
-  if (existing) {
-    Object.assign(existing, entryData);
-    editingEntryId = null;
-    showFeedback(`Updated ${phase.label} at Frame ${frameForCapture}`);
-  } else {
-    capturedEntries.push({ id: `${Date.now()}`, ...entryData });
-    showFeedback(`Saved ${phase.label} at Frame ${frameForCapture}`);
-  }
-
-  // Persist working state so returning to the phase shows what was saved.
-  working.notes = entryData.notes;
-
-  renderRecorded();
-  renderProgress();
-  updateExportState();
-
-  // Auto-advance to the next incomplete phase, but never while editing (Section 7.4).
-  if (!wasEditing) {
-    advanceToNextIncompletePhase();
-  } else {
-    renderPhaseCard();
-  }
-}
-
-function advanceToNextIncompletePhase() {
-  const next = phaseViewModels.find((phase) => !isPhaseCaptured(phase.id));
-  if (next) {
-    activePhaseId = next.id;
-  }
-  renderProgress();
-  renderPhaseCard();
-}
-
-function editEntry(entryId) {
-  const entry = capturedEntries.find((item) => item.id === entryId);
-  if (!entry) {
-    return;
-  }
-  editingEntryId = entryId;
-  activePhaseId = entry.phase_id;
-
-  const working = getWorkingState(entry.phase_id);
-  working.quality = entry.phase_quality || '';
-  working.notes = entry.notes || '';
-  working.observations = { ...(entry.structured_observations || {}) };
-
-  // Seek to the frame that owns this assessment so an unchanged edit re-saves at
-  // the same frame. Moving the video before saving re-validates the new frame.
-  const frameValue = Number.parseInt(String(entry.frame), 10);
-  if (Number.isFinite(frameValue) && video.duration) {
-    video.currentTime = Math.min(video.duration, Math.max(0, frameValue / 30));
-  }
-
-  hideBlockingError();
-  renderProgress();
-  renderPhaseCard();
-}
-
-function deleteEntry(entryId) {
-  capturedEntries = capturedEntries.filter((item) => item.id !== entryId);
-  if (editingEntryId === entryId) {
-    editingEntryId = null;
-  }
-  renderRecorded();
-  renderProgress();
-  renderPhaseCard();
-  updateExportState();
-}
-
-function renderRecorded() {
-  recordedBody.innerHTML = '';
-  capturedEntries.forEach((entry) => {
-    const row = document.createElement('tr');
-    const qualityLabel = entry.phase_quality
-      ? getQualityMeta(ontology, entry.phase_quality).label
-      : '—';
-
-    const frameCell = document.createElement('td');
-    frameCell.textContent = entry.frame;
-    const phaseCell = document.createElement('td');
-    phaseCell.textContent = entry.phase_label;
-    const qualityCell = document.createElement('td');
-    qualityCell.textContent = qualityLabel;
-
-    const actionsCell = document.createElement('td');
-    actionsCell.className = 'actions';
-    const editButton = document.createElement('button');
-    editButton.type = 'button';
-    editButton.textContent = 'Edit';
-    editButton.addEventListener('click', () => editEntry(entry.id));
-    const deleteButton = document.createElement('button');
-    deleteButton.type = 'button';
-    deleteButton.textContent = 'Delete';
-    deleteButton.addEventListener('click', () => deleteEntry(entry.id));
-    actionsCell.appendChild(editButton);
-    actionsCell.appendChild(deleteButton);
-
-    row.appendChild(frameCell);
-    row.appendChild(phaseCell);
-    row.appendChild(qualityCell);
-    row.appendChild(actionsCell);
-    recordedBody.appendChild(row);
-  });
-}
-
-// ---------------------------------------------------------------- Feedback + error
-
-function showFeedback(message) {
-  captureFeedbackEl.textContent = message;
-  captureFeedbackEl.className = 'capture-feedback visible';
-  window.clearTimeout(showFeedback.timeoutId);
-  showFeedback.timeoutId = window.setTimeout(() => {
-    captureFeedbackEl.className = 'capture-feedback';
-    captureFeedbackEl.textContent = '';
-  }, 2200);
-}
-
-function showBlockingError(message) {
-  duplicateFrameErrorEl.hidden = false;
-  duplicateFrameErrorEl.innerHTML = `
-    <span class="error-icon">✕</span>
-    <span><strong>Error</strong><br />${message}</span>
-  `;
-}
-
-function hideBlockingError() {
-  duplicateFrameErrorEl.hidden = true;
-  duplicateFrameErrorEl.innerHTML = '';
-}
-
-// ---------------------------------------------------------------- Video + frames
 
 function updateFrameInfo() {
   const time = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-  const frame = Math.round(time * 30);
-  currentFrame = frame;
-  frameNumberEl.textContent = frame;
   timestampEl.textContent = formatTimestamp(time);
-}
-
-function formatTimestamp(seconds) {
-  const safe = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
-  return `${safe.toFixed(3)}s`;
+  if (!realVideoMeta || !Number.isFinite(realVideoMeta.frame_rate_fps)) {
+    frameNumberEl.textContent = '—';
+    currentFrame = null;
+    return;
+  }
+  currentFrame = Math.round(time * realVideoMeta.frame_rate_fps);
+  frameNumberEl.textContent = currentFrame;
 }
 
 function stepFrame(delta) {
-  if (!video.duration) return;
-  video.currentTime = Math.min(video.duration, Math.max(0, video.currentTime + delta / 30));
+  if (!controlsEnabled || !realVideoMeta) return;
+  video.currentTime = Math.min(video.duration || Infinity, Math.max(0, video.currentTime + delta / realVideoMeta.frame_rate_fps));
 }
 
-function revokeCurrentVideoUrl() {
-  if (currentVideoUrl) {
-    URL.revokeObjectURL(currentVideoUrl);
-    currentVideoUrl = null;
+function seekToFrame(frame) {
+  if (!controlsEnabled || !realVideoMeta || frame === null || frame === undefined) return;
+  video.currentTime = Math.min(video.duration || Infinity, Math.max(0, frame / realVideoMeta.frame_rate_fps));
+}
+
+// ---------------------------------------------------------------------------
+// Video loading
+//
+// Every load, on every path (success, picker cancellation, a metadata-probe
+// failure, a media-element failure, or an unexpected exception) reaches
+// exactly one of two terminal states -- videoLoadState 'loaded' or 'failed'
+// -- via the single shared runVideoLoad() below. Nothing here ever leaves
+// videoLoadState stuck at 'loading'.
+// ---------------------------------------------------------------------------
+
+function resetSessionForNewVideo() {
+  shots = [];
+  selectedShotId = null;
+  realVideoMeta = null;
+  runMetadata = null;
+  pendingCsvText = null;
+  csvLoaded = false;
+  controlsEnabled = false;
+  hideCsvError();
+}
+
+let openVideoInFlight = false; // guards against a second picker opening while the first is still open (e.g. a rapid double-click)
+let openVideoInvocationCounter = 0;
+
+/**
+ * Handles the Open Video click. Guarded so exactly one picker is ever open
+ * at a time: `openVideoInFlight` covers the whole native-dialog-open window
+ * (set before the picker is invoked, cleared once it resolves), which
+ * `videoLoadState === 'loading'` alone does not -- that only becomes true
+ * once a path has actually been selected and the load sequence starts, so
+ * without this guard a second click while the OS dialog is still open would
+ * invoke a second concurrent picker.
+ */
+async function openVideo() {
+  if (openVideoInFlight || videoLoadState === 'loading') {
+    console.log('[annotation-workbench] Open Video clicked but ignored -- a picker is already open');
+    return;
   }
-}
-
-async function loadVideoFile(file) {
-  if (!file) return;
-  revokeCurrentVideoUrl();
-  videoFileName = file.name || 'Untitled Video';
-  const url = URL.createObjectURL(file);
-  currentVideoUrl = url;
-  video.src = url;
-  video.load();
-  video.currentTime = 0;
-  renderSessionMeta();
+  const invocationId = ++openVideoInvocationCounter;
+  console.log(`[annotation-workbench] Open Video clicked (invocation #${invocationId})`);
+  openVideoInFlight = true;
+  openVideoButton.disabled = true;
   try {
-    await video.play();
-  } catch {
-    // Autoplay may be blocked until the user interacts; the video still renders.
-  }
-}
-
-function openVideoFile() {
-  if (videoFileInputEl) {
-    videoFileInputEl.value = '';
-    videoFileInputEl.click();
-  }
-}
-
-// ---------------------------------------------------------------- Export
-
-function validationLabels() {
-  return phaseViewModels.map((phase) => ({ id: phase.id, label: phase.label }));
-}
-
-function validationEntries() {
-  return capturedEntries.map((entry) => ({ label_id: entry.phase_id }));
-}
-
-function updateExportState() {
-  const labels = validationLabels();
-  const entries = validationEntries();
-  const missing = getMissingLabelEntries(labels, entries);
-  const valid = canExportCalibration({
-    annotator: annotatorEl.value,
-    labels,
-    capturedEntries: entries,
-    overallQuality,
-  });
-
-  exportButtonEl.disabled = !valid;
-  if (!valid) {
-    if (!annotatorEl.value.trim()) {
-      exportStatusEl.textContent = 'Enter an annotator before exporting.';
-    } else if (missing.length > 0) {
-      const missingList = missing
-        .map((label) => (phaseViewModels.find((phase) => phase.id === label.id) || {}).label || label.id)
-        .join(', ');
-      exportStatusEl.textContent = `Record every phase before exporting: ${missingList}`;
-    } else if (!isQualitySelected(overallQuality)) {
-      exportStatusEl.textContent = 'Select an Overall Quality rating before exporting.';
+    if (environment.name === 'desktop') {
+      console.log(`[annotation-workbench] Picker invocation started (invocation #${invocationId})`);
+      const picked = await environment.pickVideoFile();
+      if (!picked) {
+        console.log(`[annotation-workbench] Picker cancelled (invocation #${invocationId})`);
+        return; // coach cancelled the native picker -- no state change
+      }
+      console.log(`[annotation-workbench] Picker returned selection (invocation #${invocationId}): ${picked.filename}`);
+      await loadVideoFromPath(picked.path, picked.filename);
     } else {
-      exportStatusEl.textContent = 'Enter an annotator before exporting.';
+      videoFileInput.click();
     }
-    exportStatusEl.className = 'export-status error';
-  } else {
-    exportStatusEl.textContent = 'Ready to export.';
-    exportStatusEl.className = 'export-status success';
+  } catch (error) {
+    console.log(`[annotation-workbench] Picker failed (invocation #${invocationId}): ${describeEnvironmentError(error)}`);
+    showFeedback(`Unable to open the video picker: ${describeEnvironmentError(error)}`, 'error');
+  } finally {
+    openVideoInFlight = false;
+    updateVideoLoadUi();
   }
 }
 
-function openExportConfirm() {
-  const labels = validationLabels();
-  const canExport = canExportCalibration({
-    annotator: annotatorEl.value,
-    labels,
-    capturedEntries: validationEntries(),
-    overallQuality,
+async function loadVideoFromFile(file) {
+  await runVideoLoad(async () => {
+    videoFileName = file.name;
+    if (currentVideoUrl) URL.revokeObjectURL(currentVideoUrl);
+    currentVideoUrl = URL.createObjectURL(file);
+    await assignVideoSrcAndAwaitReady(currentVideoUrl);
+
+    const probed = await probeVideoMetadataInBrowser(file);
+    if (!probed) {
+      throw new Error("Unable to determine this video's frame rate automatically -- the file may be corrupt or in an unsupported format.");
+    }
+    applyRealVideoMetadata(deriveRealVideoMetadata({
+      filename: videoFileName,
+      frameRateFps: probed.frame_rate_fps,
+      videoMetadataProvider: 'mp4box',
+      width: probed.width,
+      height: probed.height,
+      durationSec: probed.duration_sec,
+    }));
   });
-  if (!canExport) {
+}
+
+async function loadVideoFromPath(path, filename) {
+  await runVideoLoad(async () => {
+    videoFileName = filename;
+    const convertFileSrc = window.__TAURI__?.core?.convertFileSrc;
+    if (typeof convertFileSrc !== 'function') {
+      throw new Error('Unable to load this video: the desktop video bridge is unavailable. Try restarting the app.');
+    }
+    await assignVideoSrcAndAwaitReady(convertFileSrc(path));
+
+    const rawJson = await environment.probeVideoFrameRate(path);
+    const probed = rawJson ? parseVideoMetadataFromFfprobeJson(rawJson) : null;
+    if (!probed) {
+      throw new Error("Unable to determine this video's frame rate automatically (the ffprobe metadata probe failed or returned no usable video stream).");
+    }
+    applyRealVideoMetadata(deriveRealVideoMetadata({
+      filename,
+      frameRateFps: probed.frame_rate_fps,
+      videoMetadataProvider: 'ffprobe',
+      width: probed.width,
+      height: probed.height,
+      durationSec: probed.duration_sec,
+    }));
+  });
+}
+
+/** Shared load wrapper: guarantees exactly one terminal videoLoadState transition per call. */
+async function runVideoLoad(loadSteps) {
+  resetSessionForNewVideo();
+  videoLoadState = 'loading';
+  videoLoadError = null;
+  updateVideoLoadUi();
+  try {
+    await withTimeout(loadSteps(), VIDEO_LOAD_TIMEOUT_MS, 'Timed out loading this video.');
+    videoLoadState = 'loaded';
+  } catch (error) {
+    videoLoadState = 'failed';
+    videoLoadError = describeEnvironmentError(error);
+    realVideoMeta = null;
+    runMetadata = null;
+    setControlsEnabled(false);
+  } finally {
+    updateVideoLoadUi();
+    updateVideoBanner();
+    updateSessionMeta();
     updateExportState();
+  }
+}
+
+function withTimeout(promise, ms, message) {
+  let timer;
+  const timeout = new Promise((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/** Assigns video.src and waits for either 'loadedmetadata' (success) or 'error' (failure) -- never neither. */
+function assignVideoSrcAndAwaitReady(src) {
+  return new Promise((resolve, reject) => {
+    function cleanup() {
+      video.removeEventListener('loadedmetadata', onLoaded);
+      video.removeEventListener('error', onError);
+    }
+    function onLoaded() {
+      cleanup();
+      resolve();
+    }
+    function onError() {
+      cleanup();
+      reject(new Error(describeVideoElementError()));
+    }
+    video.addEventListener('loadedmetadata', onLoaded, { once: true });
+    video.addEventListener('error', onError, { once: true });
+    video.src = src;
+    video.load();
+  });
+}
+
+function describeVideoElementError() {
+  const mediaError = video.error;
+  const messages = {
+    1: 'Video loading was aborted.',
+    2: 'A network error occurred while loading the video.',
+    3: 'The video could not be decoded (it may be corrupt or use an unsupported codec).',
+    4: 'This video format or source is not supported.',
+  };
+  return (mediaError && messages[mediaError.code]) || 'The video could not be loaded.';
+}
+
+function applyRealVideoMetadata(meta) {
+  realVideoMeta = meta;
+  ensureRunMetadata();
+  setControlsEnabled(true);
+  reconcilePendingCsv();
+}
+
+function ensureRunMetadata() {
+  if (runMetadata || !realVideoMeta) return;
+  runMetadata = createAnnotationRunMetadata({
+    videoId: realVideoMeta.video_id,
+    videoFilename: realVideoMeta.video_filename,
+    frameRateFps: realVideoMeta.frame_rate_fps,
+    videoMetadataProvider: realVideoMeta.video_metadata_provider,
+    sessionId: newSessionId(),
+    createdAt: new Date().toISOString(),
+  });
+}
+
+function updateVideoLoadUi() {
+  openVideoButton.disabled = videoLoadState === 'loading';
+  if (videoLoadState === 'loading') {
+    videoLoadStatusEl.textContent = 'Loading video…';
+    hideVideoLoadError();
+  } else if (videoLoadState === 'loaded') {
+    videoLoadStatusEl.textContent = 'Video loaded successfully.';
+    hideVideoLoadError();
+  } else if (videoLoadState === 'failed') {
+    videoLoadStatusEl.textContent = '';
+    showVideoLoadError(`Video load failed: ${videoLoadError}`);
+  } else {
+    videoLoadStatusEl.textContent = '';
+    hideVideoLoadError();
+  }
+}
+
+function showVideoLoadError(message) {
+  videoLoadErrorEl.hidden = false;
+  videoLoadErrorEl.textContent = message;
+}
+
+function hideVideoLoadError() {
+  videoLoadErrorEl.hidden = true;
+  videoLoadErrorEl.textContent = '';
+}
+
+// ---------------------------------------------------------------------------
+// Annotation CSV loading
+// ---------------------------------------------------------------------------
+
+function openCsv() {
+  csvFileInput.click();
+}
+
+function loadCsvText(text) {
+  let rows;
+  try {
+    rows = parseAnnotationCsv(text);
+    validateAnnotationRows(rows);
+  } catch (error) {
+    showCsvError(error instanceof AnnotationValidationError ? error.errors.join('\n') : describeEnvironmentError(error));
     return;
   }
 
-  const qualityLabel = overallQuality ? getQualityMeta(ontology, overallQuality).label : 'Not assessed';
-  exportSummaryEl.innerHTML = `
-    <div><dt>Profile</dt><dd>${activeProfile.profile_name}</dd></div>
-    <div><dt>Profile Version</dt><dd>v${getProfileVersion(activeProfile)}</dd></div>
-    <div><dt>Ontology</dt><dd>v${getOntologyVersion(ontology)}</dd></div>
-    <div><dt>Annotator</dt><dd>${annotatorEl.value.trim()}</dd></div>
-    <div><dt>Overall Quality</dt><dd>${qualityLabel}</dd></div>
-  `;
+  if (!realVideoMeta) {
+    // CSV opened before the video (or before its metadata is known): display
+    // the shots, but hold everything else pending -- no editing or seeking
+    // until a video opens and its identity is validated below.
+    pendingCsvText = text;
+    shots = renumberShotIndices(rows);
+    selectedShotId = null;
+    csvLoaded = true;
+    setControlsEnabled(false);
+    updateSessionMeta();
+    renderShotsStrip();
+    renderShotDetail();
+    return;
+  }
 
-  exportPhaseListEl.innerHTML = '';
-  phaseViewModels.forEach((phase) => {
-    const captured = isPhaseCaptured(phase.id);
-    const item = document.createElement('li');
-    item.className = captured ? 'recorded' : 'missing';
-    item.textContent = `${captured ? '✓' : '✗'}  ${phase.label}${captured ? '' : '   (not recorded)'}`;
-    exportPhaseListEl.appendChild(item);
+  applyCsvRows(rows);
+}
+
+function applyCsvRows(rows) {
+  let csvMeta = null;
+  try {
+    csvMeta = extractCsvVideoMetadata(rows);
+  } catch (error) {
+    showCsvError(describeEnvironmentError(error));
+    return;
+  }
+
+  if (csvMeta) {
+    const comparison = compareVideoIdentity(csvMeta, realVideoMeta);
+    if (comparison === 'conflicting_identity' || comparison === 'conflicting_frame_rate') {
+      showCsvError(buildMismatchMessage(comparison, csvMeta, realVideoMeta));
+      return;
+    }
+    if (comparison === 'harmless_difference') {
+      showFeedback(`This CSV's own video_filename ("${csvMeta.video_filename}") differs from the open video's filename, but their video_id and frame rate agree -- continuing.`, 'info');
+    }
+  }
+
+  // The CSV's own frame_rate_fps/video_metadata_provider (already present on
+  // every parsed row) are never touched here or anywhere else below -- the
+  // freshly-derived realVideoMeta above is used only for this identity
+  // comparison, never to rewrite imported provenance. See
+  // docs/architecture/annotation-workbench.md#imported-metadata-provenance-is-immutable.
+  hideCsvError();
+  shots = renumberShotIndices(rows);
+  selectedShotId = null;
+  csvLoaded = true;
+  pendingCsvText = null;
+  setControlsEnabled(true);
+  updateSessionMeta();
+  renderShotsStrip();
+  renderShotDetail();
+  updateExportState();
+}
+
+function reconcilePendingCsv() {
+  if (!pendingCsvText) return;
+  const text = pendingCsvText;
+  pendingCsvText = null;
+  loadCsvText(text);
+}
+
+function buildMismatchMessage(comparison, csvMeta, realMeta) {
+  if (comparison === 'conflicting_identity') {
+    return `This Annotation CSV was recorded for a different video (video_id="${csvMeta.video_id}") than the one currently open (video_id="${realMeta.video_id}"). Open the matching video or CSV -- import blocked.`;
+  }
+  return `This Annotation CSV's frame rate (${csvMeta.frame_rate_fps} fps) does not match the currently open video's real frame rate (${realMeta.frame_rate_fps} fps). Frame annotations would not be trustworthy -- import blocked.`;
+}
+
+function showCsvError(message) {
+  mismatchErrorEl.hidden = false;
+  mismatchErrorEl.textContent = message;
+}
+
+function hideCsvError() {
+  mismatchErrorEl.hidden = true;
+  mismatchErrorEl.textContent = '';
+}
+
+// ---------------------------------------------------------------------------
+// Shot list / detail rendering
+// ---------------------------------------------------------------------------
+
+function setControlsEnabled(enabled) {
+  controlsEnabled = enabled;
+  prevFrameButton.disabled = !enabled;
+  playPauseButton.disabled = !enabled;
+  nextFrameButton.disabled = !enabled;
+  renderShotsStrip();
+  renderShotDetail();
+}
+
+/**
+ * Add Shot is disabled whenever a shot is currently selected -- competing
+ * incomplete shots and confusing state otherwise. Re-enabled only once the
+ * coach leaves the current-shot workflow (Save Shot/Done Editing/Delete
+ * Shot all clear selectedShotId before the next render). Deliberately
+ * independent of whether the selected shot is complete -- the rule is
+ * purely "a shot is selected" vs "no shot is selected", nothing else.
+ * Called from renderShotDetail(), which every path that changes
+ * selectedShotId or controlsEnabled already calls, so this one place stays
+ * in sync with both.
+ */
+function updateAddShotButtonState() {
+  addShotButton.disabled = !controlsEnabled || Boolean(selectedShotId);
+}
+
+function getSelectedShot() {
+  return shots.find((candidate) => candidate.shot_id === selectedShotId) ?? null;
+}
+
+/** Resolves the shot's coaching profile and its phase view models together -- the one place both are derived from a shot. */
+function resolveActiveProfileAndPhases(shot) {
+  const profile = shot ? resolveProfileForShot(shot, taxonomy, profileIndex) : null;
+  const phases = profile ? buildPhaseViewModels(profile, ontology) : [];
+  return { profile, phases };
+}
+
+/** The first phase (in profile order) without both a captured frame and a quality rating, or the first phase if all are captured. */
+function firstIncompletePhaseId(shot, phases) {
+  if (!shot || phases.length === 0) return null;
+  const incomplete = phases.find((phase) => !isPhaseCaptured(shot, phase.id));
+  return (incomplete || phases[0]).id;
+}
+
+/** True if a phase has a captured frame, a stored assessment, or both -- used only to decide whether Clear has anything to do. */
+function phaseHasAnyData(shot, phaseId) {
+  if (getPhaseFrame(shot, phaseId) !== null) return true;
+  const assessment = getPhaseAssessment(shot, phaseId);
+  return assessment.qualityId !== '' || assessment.notes !== '' || Object.keys(assessment.observations).length > 0;
+}
+
+/**
+ * Selecting a shot (from the saved-shots strip beneath the video) seeks the
+ * video to its Contact Point frame and syncs the phase editor to match --
+ * the video and the phase editor should never disagree about what the coach
+ * is reviewing. Contact Point is preferred whenever this shot's resolved
+ * profile actually configures it; otherwise this falls back to the existing
+ * firstIncompletePhaseId behaviour (no profile resolved, or a hypothetical
+ * future profile without a contact_point phase) rather than inventing one.
+ *
+ * `preferredPhaseId` overrides that Contact-Point preference when the phase
+ * genuinely exists on this shot's resolved profile -- used only by
+ * handleAddShot so a freshly-created manual shot opens at Ready Position
+ * instead. `seek: false` skips the video seek entirely -- also used only by
+ * handleAddShot, since a newly-created shot's effective contact frame is
+ * already the current frame, so seeking would only be pointless movement,
+ * never an actual navigation. This remains the one, single navigation path;
+ * both are optional, additive parameters, not a second selection function.
+ */
+function selectShot(shotId, { preferredPhaseId = null, seek = true } = {}) {
+  selectedShotId = shotId;
+  const shot = getSelectedShot();
+  const { phases } = resolveActiveProfileAndPhases(shot);
+  if (preferredPhaseId && phases.some((phase) => phase.id === preferredPhaseId)) {
+    activePhaseId = preferredPhaseId;
+  } else {
+    const contactPhase = phases.find((phase) => phase.id === 'contact_point');
+    activePhaseId = contactPhase ? contactPhase.id : firstIncompletePhaseId(shot, phases);
+  }
+  phaseWorking = {};
+  if (shot && activePhaseId) {
+    phaseWorking[activePhaseId] = getPhaseAssessment(shot, activePhaseId);
+  }
+  renderShotsStrip();
+  renderShotDetail();
+  if (seek && controlsEnabled) {
+    seekToFrame(effectiveContactFrame(shot));
+  }
+}
+
+/**
+ * Selects a phase within the currently selected shot's editor -- clicking a
+ * phase progress row or a keyboard shortcut. The draft in `phaseWorking` is
+ * seeded once from the stored assessment the first time a phase is visited,
+ * then preserved across navigation until an explicit Capture/Clear (never
+ * silently re-hydrated on every click), matching the old workflow's model.
+ */
+function selectPhase(phaseId) {
+  const shot = getSelectedShot();
+  if (!shot) return;
+  activePhaseId = phaseId;
+  if (!phaseWorking[phaseId]) {
+    phaseWorking[phaseId] = getPhaseAssessment(shot, phaseId);
+  }
+  renderShotDetail();
+}
+
+/**
+ * The sole shot-navigation UI, beneath the video alongside Add Shot -- lists
+ * every shot currently in the session, complete or not. Every shot that
+ * exists in memory must stay visible and reachable: an incomplete/unsaved
+ * shot still reserves its frame (findDuplicateContactFrame checks all
+ * shots), so hiding it here would leave a coach unable to explain, reopen,
+ * complete, or delete whatever is blocking a frame -- an orphaned shot with
+ * no way back to it. "Saved" (see handleSaveShot) only governs CSV export
+ * eligibility (exportableShots), never navigation visibility. Labels are
+ * compact and navigation-only (stable shot id + contact frame + a Ready/
+ * Incomplete status derived live from computeShotReadiness), never verbose
+ * implementation text like a raw review_status. Selecting one just calls
+ * the existing selectShot(), which already restores the whole editor --
+ * phases, qualities, observations, notes, overall assessment -- from that
+ * shot's own row, since that's how selecting any shot has always worked.
+ */
+function renderShotsStrip() {
+  shotsCountEl.textContent = shots.length > 0 ? `${shots.length} shot${shots.length === 1 ? '' : 's'}` : '';
+  shotsStripEl.innerHTML = '';
+  for (const shot of shots) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    const frame = effectiveContactFrame(shot);
+    const { profile, phases } = resolveActiveProfileAndPhases(shot);
+    const readiness = computeShotReadiness(shot, profile, phases);
+    const isReady = readiness.status === 'ready';
+    const isSelected = shot.shot_id === selectedShotId;
+    button.className = [
+      'shot-chip',
+      isReady ? 'ready' : 'incomplete',
+      isSelected ? 'selected' : '',
+    ].filter(Boolean).join(' ');
+    button.textContent = `${shot.shot_id} · f${frame ?? '?'} · ${isReady ? 'Ready' : 'Incomplete'}`;
+    button.addEventListener('click', () => selectShot(shot.shot_id));
+    shotsStripEl.appendChild(button);
+    // The strip is height-bounded and scrolls (~70-shot clips) -- keep the
+    // selected chip in view rather than requiring the coach to hunt for it.
+    if (isSelected) button.scrollIntoView({ block: 'nearest' });
+  }
+  shotsStripEmptyEl.hidden = shots.length > 0;
+}
+
+function renderShotDetail() {
+  updateAddShotButtonState();
+  const shot = getSelectedShot();
+  if (!shot) {
+    shotDetailEmptyEl.hidden = false;
+    shotDetailBodyEl.hidden = true;
+    return;
+  }
+
+  shotDetailEmptyEl.hidden = true;
+  shotDetailBodyEl.hidden = false;
+  shotDetailIdEl.textContent = shot.shot_id;
+  shotDetailSourceEl.textContent = shot.source;
+  shotDetailAutomatedFrameEl.textContent = shot.automated_contact_frame ?? '—';
+  shotDetailConfidenceEl.textContent = typeof shot.confidence === 'number' ? shot.confidence.toFixed(2) : '—';
+  shotDetailProvidersEl.textContent = shot.contributing_providers?.length ? shot.contributing_providers.join(', ') : '—';
+  shotDetailReviewFlagsEl.textContent = shot.review_flags?.length ? shot.review_flags.join(', ') : '—';
+  shotDetailReviewedFrameEl.textContent = shot.reviewed_contact_frame ?? '—';
+  shotDetailStatusEl.textContent = shot.review_status;
+
+  // Accept and "Mark as False Detection" have both been removed from the UI
+  // (the workbench has moved from an AI-review tool to a coaching
+  // annotation tool) -- the underlying setPhaseFrame/rejectShot/'rejected'
+  // lifecycle in annotation_model.mjs/phase_frame_mapping.mjs is untouched
+  // for CSV/tooling compatibility, it simply has no button wired to it any
+  // more.
+  shotDeleteButton.disabled = !controlsEnabled || !canDeleteShot(shot);
+  shotDeleteButton.hidden = !canDeleteShot(shot);
+
+  renderClassificationFields(shot);
+  renderResolvedProfile(shot);
+}
+
+/**
+ * Populates the three Classification selects (taxonomy-driven, ids as
+ * option values) from the shot's own stored coach-facing labels -- Shot
+ * Type options are always freshly filtered to the currently-selected Shot
+ * Class, Shot Variant to the currently-selected Shot Type. Shot Class/Type
+ * have no separate blank placeholder any more -- the taxonomy's own Unknown
+ * entry (present under every class, plus a top-level Unknown class) is the
+ * one honest, real, exportable option for "can't classify this precisely",
+ * never a second overlapping concept. Shot Variant keeps a blank "None"
+ * option -- a genuinely different concept (this type has no variant
+ * selected/needed), not a classification-uncertainty placeholder.
+ */
+function renderClassificationFields(shot) {
+  const ids = classificationIdsForShot(taxonomy, shot);
+  populateSelectOptions(shotDetailShotClassEl, getClasses(taxonomy));
+  shotDetailShotClassEl.value = ids.classId || '';
+  populateSelectOptions(shotDetailShotTypeEl, getTypesForClass(taxonomy, ids.classId));
+  shotDetailShotTypeEl.value = ids.typeId || '';
+  populateSelectOptions(shotDetailShotVariantEl, getVariantsForType(taxonomy, ids.classId, ids.typeId), { includeBlank: true, blankLabel: 'None' });
+  shotDetailShotVariantEl.value = ids.variantId || '';
+  shotDetailShotClassEl.disabled = !controlsEnabled;
+  shotDetailShotTypeEl.disabled = !controlsEnabled;
+  shotDetailShotVariantEl.disabled = !controlsEnabled;
+}
+
+/**
+ * Replaces a <select>'s options from a taxonomy-derived `{id,label}` list --
+ * shared by the per-shot Classification selects and the session Default
+ * selects. Option value is always the taxonomy id (never the label), so
+ * every classification handler works in ids until the moment it writes back
+ * to a shot via classificationLabelsForIds.
+ */
+function populateSelectOptions(selectEl, options, { includeBlank = false, blankLabel = '' } = {}) {
+  selectEl.innerHTML = '';
+  if (includeBlank) {
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = blankLabel;
+    selectEl.appendChild(blank);
+  }
+  for (const option of options) {
+    const el = document.createElement('option');
+    el.value = option.id;
+    el.textContent = option.label;
+    selectEl.appendChild(el);
+  }
+}
+
+function renderResolvedProfile(shot) {
+  const { profile, phases } = resolveActiveProfileAndPhases(shot);
+  if (!profile) {
+    shotDetailProfileEmptyEl.hidden = false;
+    shotDetailProfileBodyEl.hidden = true;
+    overallAssessmentBlockEl.hidden = true;
+    // The phase editor/progress/summary now live above Shot Detail, no
+    // longer nested inside shotDetailProfileBodyEl -- hide them explicitly
+    // here since a profile-less shot has no phases to show.
+    phaseCardEl.hidden = true;
+    phaseProgressBlockEl.hidden = true;
+    phaseSummaryBlockEl.hidden = true;
+    saveShotButton.disabled = true;
+    return;
+  }
+
+  shotDetailProfileEmptyEl.hidden = true;
+  shotDetailProfileBodyEl.hidden = false;
+  overallAssessmentBlockEl.hidden = false;
+  phaseProgressBlockEl.hidden = false;
+  phaseSummaryBlockEl.hidden = false;
+  shotDetailProfileNameEl.textContent = profile.profile_name;
+
+  // The resolved profile can change (a coach reclassifying shot_type) out
+  // from under an activePhaseId that no longer exists in the new profile --
+  // recover the same way a fresh selectShot() would.
+  if (!activePhaseId || !phases.some((phase) => phase.id === activePhaseId)) {
+    activePhaseId = firstIncompletePhaseId(shot, phases);
+  }
+  if (activePhaseId && !phaseWorking[activePhaseId]) {
+    phaseWorking[activePhaseId] = getPhaseAssessment(shot, activePhaseId);
+  }
+
+  renderPhaseSummary(shot, phases);
+  renderPhaseProgress(shot, phases);
+  renderPhaseCard(shot, phases, profile);
+  renderOverallAssessment(shot, profile);
+
+  const readiness = computeShotReadiness(shot, profile, phases);
+  const readinessText = {
+    ready: 'Ready to export.',
+    incomplete: `Missing: ${readiness.missing.join(', ')}.`,
+    'no-profile': '',
+  }[readiness.status];
+  shotDetailReadinessEl.textContent = readinessText;
+  shotDetailReadinessEl.classList.toggle('progress-complete', readiness.status === 'ready');
+  saveShotButton.disabled = !controlsEnabled || readiness.status !== 'ready';
+}
+
+// ---------------------------------------------------------------------------
+// Phase editor
+// ---------------------------------------------------------------------------
+
+/**
+ * A compact, read-only summary -- one row per configured phase (frame,
+ * quality) -- so a coach can see what's actually been labelled without
+ * hunting through the automated-evidence metadata below or opening each
+ * phase individually. Built entirely from the existing resolved profile,
+ * getPhaseFrame (phase_frame_mapping.mjs) and getPhaseAssessment
+ * (phase_assessment.mjs) -- no new editing controls, no duplicated frame or
+ * assessment lookup.
+ */
+function renderPhaseSummary(shot, phases) {
+  phaseSummaryListEl.innerHTML = '';
+  for (const phase of phases) {
+    const frame = getPhaseFrame(shot, phase.id);
+    const assessment = getPhaseAssessment(shot, phase.id);
+    const qualityLabel = assessment.qualityId ? getQualityMeta(ontology, assessment.qualityId).label : 'Not assessed';
+
+    const row = document.createElement('div');
+    row.className = 'phase-summary-row';
+
+    const label = document.createElement('span');
+    label.className = 'phase-summary-label';
+    label.textContent = phase.label;
+
+    const frameEl = document.createElement('span');
+    frameEl.className = 'phase-summary-frame';
+    frameEl.textContent = frame !== null ? `f${frame}` : 'Not captured';
+
+    const qualityEl = document.createElement('span');
+    qualityEl.className = 'phase-summary-quality';
+    qualityEl.textContent = qualityLabel;
+
+    row.append(label, frameEl, qualityEl);
+    phaseSummaryListEl.appendChild(row);
+  }
+}
+
+function renderPhaseProgress(shot, phases) {
+  phaseProgressListEl.innerHTML = '';
+  for (const phase of phases) {
+    const li = document.createElement('li');
+    li.className = 'progress-item';
+    const isActive = phase.id === activePhaseId;
+    const captured = isPhaseCaptured(shot, phase.id);
+    if (isActive) li.classList.add('active');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `phase-status ${captured ? 'captured' : isActive ? 'active pending' : 'pending'}`;
+    const icon = captured ? '✓' : isActive ? '●' : '○';
+    const shortcutHint = phase.shortcut ? ` (${phase.shortcut})` : '';
+    // Reuses getPhaseFrame (phase_frame_mapping.mjs) -- the same lookup the
+    // rest of the app already uses -- never a second frame-lookup path. An
+    // incomplete phase never invents a frame; captured is the one and only
+    // gate for showing one.
+    const frame = captured ? getPhaseFrame(shot, phase.id) : null;
+    const frameHint = frame !== null ? ` · f${frame}` : '';
+    button.textContent = `${icon} ${phase.label}${frameHint}${shortcutHint}`;
+    button.addEventListener('click', () => selectPhase(phase.id));
+    li.appendChild(button);
+    phaseProgressListEl.appendChild(li);
+  }
+  const capturedCount = phases.filter((phase) => isPhaseCaptured(shot, phase.id)).length;
+  phaseProgressSummaryEl.textContent =
+    phases.length > 0 && capturedCount === phases.length
+      ? 'All phases recorded ✓'
+      : `${capturedCount} of ${phases.length} phases recorded`;
+  phaseProgressSummaryEl.classList.toggle('progress-complete', phases.length > 0 && capturedCount === phases.length);
+}
+
+function renderPhaseCard(shot, phases, profile) {
+  const phase = phases.find((candidate) => candidate.id === activePhaseId);
+  if (!phase) {
+    phaseCardEl.hidden = true;
+    return;
+  }
+  phaseCardEl.hidden = false;
+  phaseCardTitleEl.textContent = phase.label;
+  phaseCardDescriptionEl.textContent = phase.description || '';
+  phaseCardDescriptionEl.hidden = !phase.description;
+
+  const working = phaseWorking[phase.id] || getPhaseAssessment(shot, phase.id);
+  phaseWorking[phase.id] = working;
+
+  renderPhaseObservations(phase, working, profile);
+
+  const qualityOptions = buildQualityOptions(profile, ontology);
+  renderQualityGroup(phaseQualityOptionsEl, qualityOptions, working.qualityId, (qualityId) => {
+    working.qualityId = working.qualityId === qualityId ? '' : qualityId;
+    renderPhaseCard(shot, phases, profile);
   });
 
-  exportConfirmEl.hidden = false;
+  phaseNotesEl.value = working.notes;
+
+  phaseCaptureButton.disabled = !controlsEnabled || currentFrame === null;
+  phaseClearButton.disabled = !controlsEnabled || !phaseHasAnyData(shot, phase.id);
 }
 
-function closeExportConfirm() {
-  exportConfirmEl.hidden = true;
+function renderPhaseObservations(phase, working, profile) {
+  phaseObservationsListEl.innerHTML = '';
+  const ratingOptions = buildRatingOptions(profile, ontology);
+  for (const observation of phase.observations) {
+    const li = document.createElement('li');
+    li.className = 'observation-row';
+    const label = document.createElement('span');
+    label.className = 'observation-label';
+    label.textContent = observation.label;
+    li.appendChild(label);
+
+    const select = document.createElement('select');
+    select.disabled = !controlsEnabled;
+    const notAssessedOption = document.createElement('option');
+    notAssessedOption.value = 'not_assessed';
+    notAssessedOption.textContent = 'Not assessed';
+    select.appendChild(notAssessedOption);
+    for (const rating of ratingOptions) {
+      const option = document.createElement('option');
+      option.value = rating.id;
+      option.textContent = rating.label;
+      select.appendChild(option);
+    }
+    select.value = working.observations[observation.id] || 'not_assessed';
+    select.addEventListener('change', () => {
+      if (select.value === 'not_assessed') {
+        delete working.observations[observation.id];
+      } else {
+        working.observations[observation.id] = select.value;
+      }
+    });
+    li.appendChild(select);
+    phaseObservationsListEl.appendChild(li);
+  }
 }
 
-async function writeCsv() {
-  const rows = [
-    buildCsvHeaders(),
-    ...buildExportRows(capturedEntries, {
-      ...sessionMetadata,
-      profile_id: getProfileId(activeProfile),
-      profile_version: getProfileVersion(activeProfile),
-      ontology_version: resolveOntologyVersion(getOntologyVersion(ontology), activeProfile.ontology_version),
-      shot_type: activeProfile.shot_type,
-      overall_quality_id: overallQuality,
-      overall_notes: overallNotes,
-    }),
-  ];
-  const csv = rows.map((row) => row.map((value) => {
-    const safeValue = value === null || value === undefined ? '' : String(value);
-    return `"${safeValue.replace(/"/g, '""')}"`;
-  }).join(',')).join('\n');
-  const suggestedName = buildExportFilename(videoFileName, activeProfileFileName);
+/** Renders a toggle-button group (Phase Quality or Overall Quality): re-clicking the selected option deselects it. */
+function renderQualityGroup(container, options, selectedId, onSelect) {
+  container.innerHTML = '';
+  for (const option of options) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `quality-option${option.id === selectedId ? ' selected' : ''}`;
+    button.textContent = option.label;
+    button.disabled = !controlsEnabled;
+    button.addEventListener('click', () => onSelect(option.id));
+    container.appendChild(button);
+  }
+}
 
+function renderOverallAssessment(shot, profile) {
+  const qualityOptions = buildQualityOptions(profile, ontology);
+  renderQualityGroup(overallQualityOptionsEl, qualityOptions, shot.overall_quality_id, (qualityId) => {
+    const nextValue = shot.overall_quality_id === qualityId ? '' : qualityId;
+    mutateSelectedShot((candidate) => ({ ...candidate, overall_quality_id: nextValue }));
+  });
+  overallNotesEl.value = shot.notes || '';
+}
+
+function handleCapturePhase() {
+  const shot = getSelectedShot();
+  if (!shot || !activePhaseId || currentFrame === null) return;
+  const phaseId = activePhaseId;
+  const working = phaseWorking[phaseId] || getPhaseAssessment(shot, phaseId);
+  if (!working.qualityId) {
+    showFeedback('Select a Phase Quality rating before capturing this phase.', 'error');
+    return;
+  }
+  const { phases } = resolveActiveProfileAndPhases(shot);
+  const conflict = findPhaseFrameOwner(shot, phases, currentFrame, phaseId);
+  if (conflict) {
+    showFeedback(buildFrameInUseErrorMessage(currentFrame, conflict.label), 'error');
+    return;
+  }
+  const phaseLabel = phases.find((candidate) => candidate.id === phaseId)?.label || phaseId;
+  const wasCaptured = isPhaseCaptured(shot, phaseId);
   try {
-    await environment.saveTextFile({ content: csv, suggestedName, mimeType: 'text/csv' });
+    mutateSelectedShot((candidate) =>
+      capturePhaseFrame(candidate, {
+        phaseId,
+        frame: currentFrame,
+        qualityId: working.qualityId,
+        notes: working.notes,
+        observations: working.observations,
+      }),
+    );
   } catch (error) {
-    console.error('Unable to save CSV export.', error);
-    window.alert(`Unable to save CSV export: ${describeEnvironmentError(error)}`);
+    showFeedback(describeEnvironmentError(error), 'error');
+    return;
+  }
+  showFeedback(`Captured ${phaseLabel} at frame ${currentFrame}.`, 'success');
+  if (!wasCaptured) {
+    const updatedShot = getSelectedShot();
+    const nextPhaseId = firstIncompletePhaseId(updatedShot, phases);
+    if (nextPhaseId && nextPhaseId !== phaseId) {
+      selectPhase(nextPhaseId);
+    }
   }
 }
 
-// ---------------------------------------------------------------- Profile loading
-
-async function loadProfileFromFile(file) {
+function handleClearPhase() {
+  const shot = getSelectedShot();
+  if (!shot || !activePhaseId) return;
+  const phaseId = activePhaseId;
+  const { phases } = resolveActiveProfileAndPhases(shot);
+  const phaseLabel = phases.find((candidate) => candidate.id === phaseId)?.label || phaseId;
+  phaseWorking[phaseId] = { qualityId: '', notes: '', observations: {} };
   try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-    applyProfile(data, file.name);
+    mutateSelectedShot((candidate) => clearPhase(candidate, phaseId));
   } catch (error) {
-    console.error('Unable to parse the selected calibration profile.', error);
-    window.alert(`Unable to load profile JSON: ${error.message}`);
-    renderBanner(null);
+    showFeedback(describeEnvironmentError(error), 'error');
+    return;
   }
+  showFeedback(`Cleared ${phaseLabel}.`, 'success');
 }
 
-// ---------------------------------------------------------------- Event wiring
+/**
+ * `type` drives the feedback area's visual class -- 'success' (green),
+ * 'error' (red, the default: most calls are reporting a blocked/failed
+ * action), or 'info' (neutral) -- so a blocking/failed action never renders
+ * with the same colour as a successful one.
+ */
+function showFeedback(message, type = 'error') {
+  captureFeedbackEl.textContent = message;
+  captureFeedbackEl.className = `capture-feedback ${type}`;
+}
 
-overallNotesEl.addEventListener('input', () => {
-  overallNotes = overallNotesEl.value.trim();
-});
+// ---------------------------------------------------------------------------
+// Shot actions
+// ---------------------------------------------------------------------------
 
-phaseNotesEl.addEventListener('input', () => {
-  if (activePhaseId) {
-    getWorkingState(activePhaseId).notes = phaseNotesEl.value;
-  }
-});
+function withAnnotatorStamp(row) {
+  const annotator = annotatorEl.value.trim();
+  return annotator ? { ...row, annotator } : row;
+}
 
-annotatorEl.addEventListener('input', () => {
-  capturedEntries = capturedEntries.map((entry) => ({ ...entry, annotator: annotatorEl.value.trim() }));
+function mutateSelectedShot(mutator) {
+  const shot = shots.find((candidate) => candidate.shot_id === selectedShotId);
+  if (!shot) return;
+  const updated = withAnnotatorStamp(mutator(shot));
+  shots = renumberShotIndices(shots.map((candidate) => (candidate.shot_id === updated.shot_id ? updated : candidate)));
+  selectedShotId = updated.shot_id;
+  renderShotsStrip();
+  renderShotDetail();
   updateExportState();
-});
+}
 
-loadProfileButtonEl.addEventListener('click', () => profileInputEl.click());
+/**
+ * Every keystroke in the session-level Annotator field immediately syncs to
+ * every shot -- Annotator is required, session-level metadata for the whole
+ * clip, not a per-shot field (restores the old workflow's "one global
+ * annotator synced across every entry" behaviour, scoped to shots instead of
+ * a flat entry list). Newly-created shots inherit it via withAnnotatorStamp
+ * in handleAddShot, same as always.
+ */
+function handleAnnotatorInput() {
+  const annotator = annotatorEl.value.trim();
+  shots = shots.map((shot) => ({ ...shot, annotator }));
+  renderShotsStrip();
+  renderShotDetail();
+  updateExportState();
+}
 
-profileInputEl.addEventListener('change', async () => {
-  const file = profileInputEl.files?.[0];
-  if (!file) return;
-  await loadProfileFromFile(file);
-  profileInputEl.value = '';
-});
+function handleDeleteShot() {
+  if (!selectedShotId) return;
+  try {
+    shots = renumberShotIndices(deleteShot(shots, selectedShotId));
+    selectedShotId = null;
+    renderShotsStrip();
+    renderShotDetail();
+    updateExportState();
+  } catch (error) {
+    showFeedback(describeEnvironmentError(error), 'error');
+  }
+}
 
-videoFileInputEl?.addEventListener('change', async () => {
-  const file = videoFileInputEl.files?.[0];
-  if (!file) return;
-  await loadVideoFile(file);
-  videoFileInputEl.value = '';
-});
-
-document.getElementById('open-video').addEventListener('click', openVideoFile);
-document.getElementById('play-pause').addEventListener('click', () => {
-  if (video.paused) video.play(); else video.pause();
-});
-document.getElementById('prev-frame').addEventListener('click', () => stepFrame(-1));
-document.getElementById('next-frame').addEventListener('click', () => stepFrame(1));
-savePhaseButtonEl.addEventListener('click', savePhaseAssessment);
-exportButtonEl.addEventListener('click', openExportConfirm);
-exportCancelEl.addEventListener('click', closeExportConfirm);
-exportConfirmButtonEl.addEventListener('click', () => {
-  closeExportConfirm();
-  writeCsv();
-});
-
-document.addEventListener('keydown', (event) => {
-  if (isEditableTarget(event.target)) {
+/**
+ * Disabled whenever a shot is currently selected (see
+ * updateAddShotButtonState) -- so while this fires, selectedShotId is always
+ * already null and no other shot's editor state can leak into the new one.
+ */
+function handleAddShot() {
+  if (currentFrame === null || !runMetadata) return;
+  const duplicate = findDuplicateContactFrame(shots, currentFrame);
+  if (duplicate) {
+    showFeedback(`Frame ${currentFrame} is already used by shot ${duplicate.shot_id} -- move to a different frame before adding a new shot here.`, 'error');
     return;
   }
-  if (event.code === 'Space') {
-    event.preventDefault();
-    if (video.paused) video.play(); else video.pause();
+  // The Default selects store taxonomy ids (see populateSelectOptions) --
+  // converted to coach-facing labels here, since that's what the canonical
+  // schema (and createManualShot's defaultShotType parameter) expects.
+  // shot_class isn't a createManualShot parameter (that pure module only
+  // knows about defaultShotType) -- prefilled here the same way `saved` is,
+  // by overriding the field on the built shot. Affects only this new shot;
+  // existing shots are never touched, and it stays editable afterward via
+  // the ordinary Classification field like any other shot's shot_class.
+  const defaultLabels = classificationLabelsForIds(taxonomy, {
+    classId: defaultShotClassEl.value || null,
+    typeId: defaultShotTypeEl.value || null,
+    variantId: null,
+  });
+  const newShot = {
+    ...withAnnotatorStamp(createManualShot({ frame: currentFrame, shots, runMetadata, defaultShotType: defaultLabels.shot_type })),
+    shot_class: defaultLabels.shot_class,
+    saved: false,
+  };
+  // Routed through the one canonical selectShot() (see its own doc comment),
+  // but a freshly-created manual shot deliberately opens at Ready Position
+  // rather than the usual Contact Point preference -- for manual labelling
+  // the coach starts at the first phase, not the middle one -- and never
+  // seeks the video (the shot was just created at the current frame, so
+  // there is nowhere to seek to).
+  shots = renumberShotIndices([...shots, newShot]);
+  selectShot(newShot.shot_id, { preferredPhaseId: 'ready_position', seek: false });
+  updateExportState();
+  showFeedback(`Added ${newShot.shot_id} at frame ${currentFrame}.`, 'success');
+}
+
+/**
+ * Commits the selected shot into the annotation session -- reuses the exact
+ * same "complete" definition already computed for the readiness badge
+ * (computeShotReadiness's 'ready' status: every configured phase captured
+ * with a Phase Quality, plus Overall Quality set). Deselects afterward so
+ * the existing, unchanged Add Shot button is the obvious next action for
+ * the next shot -- no new "next shot" UI needed.
+ */
+/** Clears the current shot selection, hiding the Shot Detail/phase editor and returning to the saved-shots strip -- shared by Save Shot and Done Editing. */
+function deselectShot() {
+  selectedShotId = null;
+  activePhaseId = null;
+  phaseWorking = {};
+  renderShotsStrip();
+  renderShotDetail();
+}
+
+function handleSaveShot() {
+  const shot = getSelectedShot();
+  if (!shot || !controlsEnabled) return;
+  const { profile, phases } = resolveActiveProfileAndPhases(shot);
+  const readiness = computeShotReadiness(shot, profile, phases);
+  if (readiness.status !== 'ready') {
+    showFeedback(`Complete every phase and Overall Quality before saving this shot. Missing: ${readiness.missing.join(', ')}.`, 'error');
     return;
   }
-  if (event.key === 'ArrowLeft') { stepFrame(-1); return; }
-  if (event.key === 'ArrowRight') { stepFrame(1); return; }
+  const shotId = shot.shot_id;
+  mutateSelectedShot((candidate) => ({ ...candidate, saved: true }));
+  deselectShot();
+  showFeedback(`${shotId} saved. Click Add Shot at Current Frame to start the next shot.`, 'success');
+}
 
-  // Phase shortcuts defined by the active Calibration Profile.
-  const shortcutPhase = phaseViewModels.find((phase) => phase.shortcut && phase.shortcut === event.key);
-  if (shortcutPhase) {
-    selectPhase(shortcutPhase.id);
+/**
+ * "Done Editing" -- an explicit way to leave the editor for a reopened saved
+ * shot without triggering another save. Edits already mutated the shot in
+ * memory as they happened (Capture/Clear/Overall Quality/notes all commit
+ * immediately); this only clears the selection and returns focus to the
+ * saved-shots strip, leaving the video at its current frame.
+ */
+function handleDoneEditing() {
+  deselectShot();
+  addShotButton.focus();
+}
+
+/**
+ * Changing Shot Class re-derives Shot Type/Variant via
+ * reconcileClassSelection (classification_taxonomy.mjs) -- a previously
+ * selected type/variant only survives if it's genuinely still valid under
+ * the new class, otherwise it's cleared, never left pointing at a
+ * combination the taxonomy doesn't define.
+ */
+function handleShotClassChange() {
+  const previousIds = classificationIdsForShot(taxonomy, getSelectedShot());
+  const nextIds = reconcileClassSelection(taxonomy, previousIds, shotDetailShotClassEl.value || null);
+  const labels = classificationLabelsForIds(taxonomy, nextIds);
+  mutateSelectedShot((shot) => ({ ...shot, shot_class: labels.shot_class, shot_type: labels.shot_type, shot_variant: labels.shot_variant }));
+}
+
+/** Changing Shot Type clears an incompatible Shot Variant via reconcileTypeSelection, same reasoning as handleShotClassChange. */
+function handleShotTypeChange() {
+  const previousIds = classificationIdsForShot(taxonomy, getSelectedShot());
+  const nextIds = reconcileTypeSelection(taxonomy, previousIds, shotDetailShotTypeEl.value || null);
+  const labels = classificationLabelsForIds(taxonomy, nextIds);
+  mutateSelectedShot((shot) => ({ ...shot, shot_type: labels.shot_type, shot_variant: labels.shot_variant }));
+}
+
+function handleShotVariantChange() {
+  const previousIds = classificationIdsForShot(taxonomy, getSelectedShot());
+  const labels = classificationLabelsForIds(taxonomy, { ...previousIds, variantId: shotDetailShotVariantEl.value || null });
+  mutateSelectedShot((shot) => ({ ...shot, shot_variant: labels.shot_variant }));
+}
+
+// ---------------------------------------------------------------------------
+// Classification taxonomy + coaching profile registry (loaded once at
+// startup). JSON-driven discovery: adding a supported shot type/variant is a
+// taxonomy + profile file + registry entry change, never a JavaScript edit
+// (see docs/architecture/annotation-workbench.md#profile-aware-shot-classification-taxonomy--registry-json-driven).
+// ---------------------------------------------------------------------------
+
+async function loadTaxonomyAndProfiles() {
+  try {
+    taxonomy = await loadTaxonomy(environment.loadJsonResource);
+  } catch (error) {
+    // Genuinely unavailable/invalid -- every classification falls through to
+    // the explicit "no profile configured" state (resolveProfileForShot
+    // requires a taxonomy), never a guess.
+    taxonomy = null;
+    console.error('[annotation-workbench] Failed to load classification taxonomy:', describeEnvironmentError(error));
   }
+
+  try {
+    ontology = await loadOntology(environment.loadJsonResource);
+  } catch {
+    // Same fallback posture as the taxonomy above -- phase/observation/
+    // rating/quality labels fall back to prettified ids (ontology.mjs's own
+    // lookupMeta), never a guess at real coaching terminology.
+    ontology = null;
+  }
+
+  try {
+    const registry = await loadRegistry(environment.loadJsonResource);
+    const { profileIndex: loadedIndex } = await loadRegisteredProfiles(registry, {
+      fetchImpl: environment.loadJsonResource,
+      taxonomy,
+      ontology,
+      onError: (registryEntry, error) => {
+        // An enabled profile that fails to load/validate is a real,
+        // actionable configuration error -- logged clearly rather than
+        // silently dropped, even though (matching the taxonomy/ontology
+        // posture above) the app keeps running with that one classification
+        // simply resolving to "no profile configured".
+        const detail = error instanceof ProfileRegistryValidationError ? error.errors.join('; ') : describeEnvironmentError(error);
+        console.error(`[annotation-workbench] Failed to load coaching profile "${registryEntry.profileId}": ${detail}`);
+      },
+    });
+    profileIndex = loadedIndex;
+  } catch (error) {
+    profileIndex = new Map();
+    console.error('[annotation-workbench] Failed to load profile registry:', describeEnvironmentError(error));
+  }
+
+  populateDefaultClassificationSelects();
+}
+
+/** Session Default Class/Type selects -- Default Type is always re-filtered to whichever class is currently selected as default. */
+function populateDefaultClassificationSelects() {
+  populateSelectOptions(defaultShotClassEl, getClasses(taxonomy));
+  const defaultClassId = getDefaultClassId(taxonomy);
+  if (defaultClassId) defaultShotClassEl.value = defaultClassId;
+  populateDefaultShotTypeSelect();
+}
+
+function populateDefaultShotTypeSelect() {
+  const classId = defaultShotClassEl.value || null;
+  const types = getTypesForClass(taxonomy, classId);
+  populateSelectOptions(defaultShotTypeEl, types);
+  const defaultTypeId = getDefaultTypeId(taxonomy);
+  if (defaultTypeId && types.some((entry) => entry.id === defaultTypeId)) {
+    defaultShotTypeEl.value = defaultTypeId;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Session / export status
+// ---------------------------------------------------------------------------
+
+function updateVideoBanner() {
+  videoNameEl.textContent = videoFileName || 'No video loaded';
+  videoNameEl.classList.toggle('profile-empty', !videoFileName);
+  videoFrameRateEl.textContent = formatFrameRateLabel(realVideoMeta);
+}
+
+function updateSessionMeta() {
+  sessionVideoEl.textContent = videoFileName || 'No video loaded';
+  sessionFrameRateEl.textContent = formatFrameRateLabel(realVideoMeta) || '—';
+  sessionCsvEl.textContent = csvLoaded ? 'Loaded existing annotation CSV' : 'None (new annotation session)';
+}
+
+/**
+ * A manually-created shot starts unsaved (see handleAddShot/handleSaveShot)
+ * and isn't part of the exportable session until Save Shot commits it --
+ * everything else (automated-origin shots, anything loaded from a CSV) has
+ * no "unsaved" concept and is exportable as before.
+ */
+function exportableShots() {
+  return shots.filter((shot) => shot.saved !== false);
+}
+
+/**
+ * Export is blocked only on missing global metadata -- Annotator, required
+ * and session-level. Per-shot completeness (phases, Overall Quality) is
+ * advisory only, via each shot's readiness badge (renderShotDetail/
+ * renderShotsStrip) -- never a reason to block exporting a session with
+ * partially-reviewed shots still in it. An unsaved draft is excluded from
+ * both the count and the export itself until Save Shot commits it.
+ */
+function updateExportState() {
+  const hasVideo = Boolean(videoFileName) && Boolean(realVideoMeta);
+  const annotator = annotatorEl.value.trim();
+  exportButton.disabled = !hasVideo || !annotator;
+  if (!hasVideo) {
+    exportStatusEl.textContent = 'Open a video to begin.';
+  } else if (!annotator) {
+    exportStatusEl.textContent = 'Enter an annotator before exporting.';
+  } else {
+    const count = exportableShots().length;
+    exportStatusEl.textContent = `${count} shot${count === 1 ? '' : 's'} ready to export.`;
+  }
+}
+
+function buildExportFilename() {
+  const base = videoFileName ? deriveVideoId(videoFileName) : 'annotation';
+  return `${base}_annotations.csv`;
+}
+
+async function exportAnnotationCsv() {
+  try {
+    const text = buildAnnotationCsvText(exportableShots());
+    await environment.saveTextFile({ content: text, suggestedName: buildExportFilename(), mimeType: 'text/csv' });
+    showFeedback('Annotation CSV saved.', 'success');
+  } catch (error) {
+    showFeedback(`Unable to save Annotation CSV: ${describeEnvironmentError(error)}`, 'error');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wiring
+// ---------------------------------------------------------------------------
+
+openVideoButton.addEventListener('click', () => openVideo());
+openCsvButton.addEventListener('click', () => openCsv());
+
+videoFileInput.addEventListener('change', async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  await loadVideoFromFile(file);
+  videoFileInput.value = '';
+});
+
+csvFileInput.addEventListener('change', async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const text = await file.text();
+  loadCsvText(text);
+  csvFileInput.value = '';
+});
+
+prevFrameButton.addEventListener('click', () => stepFrame(-1));
+nextFrameButton.addEventListener('click', () => stepFrame(1));
+playPauseButton.addEventListener('click', () => {
+  if (video.paused) video.play();
+  else video.pause();
+});
+
+addShotButton.addEventListener('click', () => handleAddShot());
+shotDeleteButton.addEventListener('click', () => handleDeleteShot());
+exportButton.addEventListener('click', () => exportAnnotationCsv());
+
+shotDetailShotClassEl.addEventListener('change', () => handleShotClassChange());
+shotDetailShotTypeEl.addEventListener('change', () => handleShotTypeChange());
+shotDetailShotVariantEl.addEventListener('change', () => handleShotVariantChange());
+defaultShotClassEl.addEventListener('change', () => populateDefaultShotTypeSelect());
+
+annotatorEl.addEventListener('input', () => handleAnnotatorInput());
+
+phaseCaptureButton.addEventListener('click', () => handleCapturePhase());
+phaseClearButton.addEventListener('click', () => handleClearPhase());
+saveShotButton.addEventListener('click', () => handleSaveShot());
+doneEditingButton.addEventListener('click', () => handleDoneEditing());
+phaseNotesEl.addEventListener('input', () => {
+  const working = phaseWorking[activePhaseId];
+  if (working) working.notes = phaseNotesEl.value;
+});
+overallNotesEl.addEventListener('input', () => {
+  if (!getSelectedShot()) return;
+  mutateSelectedShot((candidate) => ({ ...candidate, notes: overallNotesEl.value }));
 });
 
 video.addEventListener('timeupdate', updateFrameInfo);
@@ -952,5 +1376,44 @@ video.addEventListener('loadedmetadata', updateFrameInfo);
 video.addEventListener('loadeddata', updateFrameInfo);
 video.addEventListener('seeked', updateFrameInfo);
 
-updateExportState();
-loadInitial();
+document.addEventListener('keydown', (event) => {
+  if (isEditableTarget(event.target)) {
+    return;
+  }
+  if (event.code === 'Space') {
+    event.preventDefault();
+    if (video.paused) video.play();
+    else video.pause();
+    return;
+  }
+  if (event.key === 'ArrowLeft') {
+    stepFrame(-1);
+    return;
+  }
+  if (event.key === 'ArrowRight') {
+    stepFrame(1);
+    return;
+  }
+  const shot = getSelectedShot();
+  if (!shot) return;
+  const { phases } = resolveActiveProfileAndPhases(shot);
+  const shortcutPhase = phases.find((phase) => phase.shortcut === event.key);
+  if (shortcutPhase) {
+    selectPhase(shortcutPhase.id);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+
+function init() {
+  updateVideoBanner();
+  updateSessionMeta();
+  updateExportState();
+  renderShotsStrip();
+  renderShotDetail();
+  loadTaxonomyAndProfiles().then(() => renderShotDetail());
+}
+
+init();

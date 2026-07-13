@@ -1,68 +1,48 @@
-function normalizeFrameValue(value) {
-  if (value === null || value === undefined || value === '') {
-    return null;
-  }
+// Shot-scoped duplicate-frame protection for the Annotation Workbench's
+// phase editor: prevents two phases *within the same shot* from claiming the
+// same frame. This is the phase-granularity analogue of
+// annotation_model.mjs's findDuplicateContactFrame, which prevents two
+// different *shots* from claiming the same frame -- the two checks operate
+// at different granularities and are used independently.
+//
+// Restored from the old Coach Calibration Workbench's duplicate_frame.mjs
+// (whole-session, phase-granularity check), adapted to check one shot's
+// configured phases instead of a flat session-wide entry list.
 
-  const parsed = Number.parseInt(String(value), 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
+import { getPhaseFrame } from './phase_frame_mapping.mjs';
+import { isPhaseCaptured } from './phase_assessment.mjs';
 
-export function findFrameConflicts(entries, frame) {
-  const normalizedFrame = normalizeFrameValue(frame);
-  if (normalizedFrame === null) {
-    return [];
-  }
-
-  return (entries || []).filter((entry) => normalizeFrameValue(entry?.frame) === normalizedFrame);
-}
-
-export function resolveCaptureFrame({ videoTime, currentFrame, displayedFrame } = {}) {
-  const parsedDisplayedFrame = Number.parseInt(displayedFrame, 10);
-  if (Number.isFinite(parsedDisplayedFrame) && parsedDisplayedFrame >= 0) {
-    return parsedDisplayedFrame;
-  }
-
-  if (Number.isFinite(videoTime) && videoTime > 0) {
-    return Math.round(videoTime * 30);
-  }
-
-  return Number.isFinite(currentFrame) ? currentFrame : 0;
-}
-
-export function buildDuplicateWarningMessage(frame, conflicts, newLabelName) {
-  const existingLabels = conflicts.map((entry) => entry.label_name).filter(Boolean);
-  const title = `Frame ${frame} has already been labelled as:`;
-  const bulletList = existingLabels.length > 0
-    ? existingLabels.map((label) => `• ${label}`).join('\n')
-    : '• Unknown label';
-  const prompt = `Do you also want to label this frame as:\n• ${newLabelName}?`;
-  return `${title}\n\n${bulletList}\n\n${prompt}`;
-}
-
-// Frame-level ownership. A single video frame may be used by at most one phase
-// assessment, regardless of which phase is active. Returns the entry that
-// currently owns the frame, or null if the frame is free. The entry being
-// edited is excluded so an in-place edit does not conflict with itself.
-export function findFrameOwner(entries, frame, excludeId = null) {
-  const normalizedFrame = normalizeFrameValue(frame);
-  if (normalizedFrame === null) {
-    return null;
-  }
-
-  return (entries || []).find((entry) => {
-    if (!entry) {
-      return false;
+/**
+ * Checks every phase in `phases` (typically buildPhaseViewModels' output --
+ * `[{ id, label, ... }]` -- for the shot's resolved profile, contact_point
+ * included with no exclusion) for one already holding `frame`, other than
+ * `excludePhaseId` (normally the phase currently being captured, so
+ * recapturing the same phase at the same frame is never treated as a
+ * conflict with itself). Returns the conflicting phase's `{ id, label }`, or
+ * null if `frame` is free within this shot.
+ *
+ * A phase only counts as a genuine occupant of a frame once it has actually
+ * been recorded (isPhaseCaptured: a frame *and* a quality rating) -- a bare
+ * frame value with no quality assigned isn't a real conflict source. This
+ * matters for Contact Point specifically: createManualShot sets
+ * reviewed_contact_frame to the shot's creation frame as a starting point,
+ * with no phase_assessments entry, so a fresh manual shot's Contact Point
+ * must never block capturing another phase at that same frame before Contact
+ * Point has genuinely been assessed.
+ */
+export function findPhaseFrameOwner(shot, phases, frame, excludePhaseId = null) {
+  if (frame === null || frame === undefined) return null;
+  for (const phase of phases) {
+    if (phase.id === excludePhaseId) continue;
+    if (!isPhaseCaptured(shot, phase.id)) continue;
+    if (getPhaseFrame(shot, phase.id) === frame) {
+      return { id: phase.id, label: phase.label || phase.id };
     }
-    if (excludeId !== null && entry.id === excludeId) {
-      return false;
-    }
-    return normalizeFrameValue(entry.frame) === normalizedFrame;
-  }) || null;
+  }
+  return null;
 }
 
-// Error message shown when a phase assessment is blocked because the frame is
-// already used by another phase assessment.
-export function buildFrameInUseErrorMessage(frame, phaseLabel) {
-  return `Frame ${frame} is already used by ${phaseLabel}. `
-    + 'Choose a different frame, or edit/delete the existing assessment.';
+/** Human-readable message for a blocked capture, matching the old workflow's wording. */
+export function buildFrameInUseErrorMessage(frame, ownerPhaseLabel) {
+  return `Frame ${frame} is already used by ${ownerPhaseLabel} -- move to a different frame before capturing this phase here.`;
 }

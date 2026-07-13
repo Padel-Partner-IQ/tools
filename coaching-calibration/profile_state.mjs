@@ -32,13 +32,55 @@ function normalizeIdList(value) {
     : [];
 }
 
+// classification_taxonomy-shaped { id, label } node, or null if absent/malformed.
+function normalizeClassificationNode(node) {
+  if (!node || typeof node !== 'object') return null;
+  const id = DEFAULT_STRING(node.id, '');
+  const label = DEFAULT_STRING(node.label, '');
+  if (!id && !label) return null;
+  return { id, label };
+}
+
+/**
+ * The current profile schema (schema_version "2") nests classification
+ * under `profile.classification.{shot_class,shot_type,shot_variant}` (each
+ * an `{id,label}` taxonomy node, shot_variant nullable) rather than a flat
+ * `shot_type` string. Returns null for a profile with no classification
+ * block at all (the legacy schema_version "1" shape) -- callers fall back
+ * to the flat `shot_type` field for display in that case, see below.
+ */
+function normalizeClassification(profile) {
+  if (!profile.classification || typeof profile.classification !== 'object') {
+    return null;
+  }
+  const shotClass = normalizeClassificationNode(profile.classification.shot_class);
+  const shotType = normalizeClassificationNode(profile.classification.shot_type);
+  const shotVariant = normalizeClassificationNode(profile.classification.shot_variant);
+  if (!shotClass) return null;
+  return { shot_class: shotClass, shot_type: shotType, shot_variant: shotVariant };
+}
+
+/** vocabulary.<file>.version fields (new schema) -- best-effort combined version for display, mirroring ontology.mjs's deriveOntologyVersion. */
+function deriveVocabularyVersion(vocabulary) {
+  if (!vocabulary || typeof vocabulary !== 'object') return '';
+  const versions = [...new Set(
+    Object.values(vocabulary)
+      .map((entry) => (entry && typeof entry.version === 'string' ? entry.version.trim() : ''))
+      .filter(Boolean),
+  )];
+  if (versions.length === 0) return '';
+  return versions.length === 1 ? versions[0] : `mixed:${versions.slice().sort().join('+')}`;
+}
+
 export function normalizeProfile(profile) {
   if (!profile || typeof profile !== 'object') {
     return {
       profile_id: 'default_profile',
       profile_name: 'Default Calibration Profile',
       profile_version: 'unknown',
+      schema_version: '1',
       shot_type: 'Generic',
+      classification: null,
       ontology_id: '',
       ontology_version: 'unknown',
       phases: [],
@@ -55,13 +97,25 @@ export function normalizeProfile(profile) {
       ? profile.labels
       : [];
 
+  // shot_type: the new nested classification.shot_type.label takes
+  // precedence when present; a legacy flat `shot_type` string (schema
+  // version "1", e.g. the profile_resolution.test.mjs fixtures) is the
+  // fallback -- this is the "narrow migration path" for the pre-taxonomy
+  // profile shape, kept only for display/back-compat, never written anew.
+  const classification = normalizeClassification(profile);
+  const shotType = classification?.shot_type?.label || DEFAULT_STRING(profile.shot_type, 'Generic');
+
+  const vocabularyVersion = deriveVocabularyVersion(profile.vocabulary);
+
   return {
     profile_id: DEFAULT_STRING(profile.profile_id, 'default_profile'),
     profile_name: DEFAULT_STRING(profile.profile_name, 'Default Calibration Profile'),
     profile_version: DEFAULT_STRING(profile.profile_version, 'unknown'),
-    shot_type: DEFAULT_STRING(profile.shot_type, 'Generic'),
+    schema_version: DEFAULT_STRING(profile.schema_version, '1'),
+    shot_type: shotType,
+    classification,
     ontology_id: DEFAULT_STRING(profile.ontology_id, ''),
-    ontology_version: DEFAULT_STRING(profile.ontology_version, 'unknown'),
+    ontology_version: vocabularyVersion || DEFAULT_STRING(profile.ontology_version, 'unknown'),
     phases: rawPhases.map(normalizePhase).filter(Boolean),
     ratings: normalizeIdList(profile.ratings),
     quality_ratings: normalizeIdList(profile.quality_ratings),
@@ -91,13 +145,11 @@ export function createProfileBannerState(profile = null) {
   };
 }
 
-export function getDefaultProfilePath() {
-  return './profiles/forehand_calibration_profile.json';
-}
-
-export function resolveDefaultProfilePath() {
-  return new URL(getDefaultProfilePath(), import.meta.url).toString();
-}
+// Bundled profile discovery is registry-driven (profile_registry.mjs's
+// loadRegisteredProfiles), not a hardcoded path list -- see
+// classification_taxonomy.mjs/profile_registry.mjs for taxonomy and
+// registry loading, and app.js's loadTaxonomyAndProfiles for the startup
+// sequence.
 
 export function getProfilePhases(profile) {
   return normalizeProfile(profile).phases;

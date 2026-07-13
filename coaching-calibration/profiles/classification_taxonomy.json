@@ -1,0 +1,163 @@
+{
+  "schema_version": "1",
+  "taxonomy_id": "padel_partner_iq_shot_classification",
+  "taxonomy_version": "1.1.0",
+  "description": "Classification vocabulary for annotation. A classification may be valid even when no coaching profile has yet been configured for it. \"Unknown\" is a first-class, honest classification (class-level and, under every known class, type-level) for improvised/defensive/hard-to-classify shots -- not a UI placeholder.",
+  "defaults": {
+    "shot_class_id": "groundstroke",
+    "shot_type_id": "forehand"
+  },
+  "classes": [
+    {
+      "id": "unknown",
+      "label": "Unknown",
+      "types": [
+        {
+          "id": "unknown",
+          "label": "Unknown",
+          "variants": []
+        }
+      ]
+    },
+    {
+      "id": "groundstroke",
+      "label": "Groundstroke",
+      "types": [
+        {
+          "id": "unknown",
+          "label": "Unknown",
+          "variants": []
+        },
+        {
+          "id": "forehand",
+          "label": "Forehand",
+          "variants": [
+            {
+              "id": "drive",
+              "label": "Drive"
+            },
+            {
+              "id": "lob",
+              "label": "Lob"
+            },
+            {
+              "id": "slice",
+              "label": "Slice"
+            }
+          ]
+        },
+        {
+          "id": "backhand",
+          "label": "Backhand",
+          "variants": [
+            {
+              "id": "drive",
+              "label": "Drive"
+            },
+            {
+              "id": "lob",
+              "label": "Lob"
+            },
+            {
+              "id": "slice",
+              "label": "Slice"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "volley",
+      "label": "Volley",
+      "types": [
+        {
+          "id": "unknown",
+          "label": "Unknown",
+          "variants": []
+        },
+        {
+          "id": "forehand_volley",
+          "label": "Forehand Volley",
+          "variants": []
+        },
+        {
+          "id": "backhand_volley",
+          "label": "Backhand Volley",
+          "variants": []
+        }
+      ]
+    },
+    {
+      "id": "overhead",
+      "label": "Overhead",
+      "types": [
+        {
+          "id": "unknown",
+          "label": "Unknown",
+          "variants": []
+        },
+        {
+          "id": "bandeja",
+          "label": "Bandeja",
+          "variants": []
+        },
+        {
+          "id": "vibora",
+          "label": "Vibora",
+          "variants": []
+        },
+        {
+          "id": "smash",
+          "label": "Smash",
+          "variants": [
+            {
+              "id": "flat",
+              "label": "Flat"
+            },
+            {
+              "id": "kick",
+              "label": "Kick"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "serve",
+      "label": "Serve",
+      "types": [
+        {
+          "id": "unknown",
+          "label": "Unknown",
+          "variants": []
+        },
+        {
+          "id": "forehand_serve",
+          "label": "Forehand Serve",
+          "variants": []
+        }
+      ]
+    },
+    {
+      "id": "return",
+      "label": "Return",
+      "types": [
+        {
+          "id": "unknown",
+          "label": "Unknown",
+          "variants": []
+        },
+        {
+          "id": "forehand_return",
+          "label": "Forehand Return",
+          "variants": []
+        },
+        {
+          "id": "backhand_return",
+          "label": "Backhand Return",
+          "variants": []
+        }
+      ]
+    }
+  ]
+}
