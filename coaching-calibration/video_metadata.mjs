@@ -4,20 +4,65 @@
 // 30fps when its real rate is unknown (see parseFrameRateFraction, used with
 // the bundled ffprobe sidecar's output on desktop or the vendored mp4box.js
 // probe in browser mode -- see video_probe_browser.mjs -- never a hardcoded
-// default), (2) silently pairing a coach's Annotation CSV with the wrong
-// video (see compareVideoIdentity), and (3) silently rewriting an imported
-// CSV's own provenance: a freshly-derived deriveRealVideoMetadata() result
-// for the currently-open video is used only for compareVideoIdentity,
-// diagnostics, and stamping *newly created* rows -- it must never replace an
-// existing row's own frame_rate_fps/video_metadata_provider, regardless of
-// which environment (desktop/ffprobe vs browser/mp4box) opens the file. All
+// default), (2) treating two measurements of the same real frame rate as a
+// conflict just because a browser-estimated average and an authoritative
+// ffprobe reading do not match bit-for-bit (see areFrameRatesCompatible,
+// compareVideoIdentity), and (3) silently rewriting an imported CSV's own
+// provenance: a freshly-derived deriveRealVideoMetadata() result for the
+// currently-open video is used only for compareVideoIdentity and
+// diagnostics here -- it must never replace an existing row's own
+// frame_rate_fps/video_metadata_provider, regardless of which environment
+// (desktop/ffprobe vs browser/mp4box) opens the file. (app.js separately
+// promotes a successfully-imported CSV's own frame_rate_fps to the
+// session's canonical annotation clock -- see its applyCanonicalAnnotationFrameRate;
+// that is a session-level policy, not something this module decides.) All
 // pure functions, testable with injected fixture data -- no real video,
 // ffprobe, mp4box, or Tauri involved.
 
 import { deriveVideoId } from './video_id.mjs';
 
-/** Frame rates within this many fps of each other are treated as the same rate (float rounding tolerance), not a conflict. */
-export const FRAME_RATE_EPSILON = 0.01;
+/**
+ * Two frame rates are treated as the same real frame rate -- not a conflict
+ * -- whenever they are within FRAME_RATE_ABSOLUTE_TOLERANCE_FPS of each
+ * other, OR within FRAME_RATE_RELATIVE_TOLERANCE of each other relatively.
+ * Both thresholds exist because a fixed absolute tolerance alone is too
+ * tight at higher frame rates (e.g. 59.94 vs 60.00 differs by 0.06fps, more
+ * than a 30fps-scaled tolerance would allow) while a fixed relative
+ * tolerance alone is too tight at low, exact-fraction rates (e.g. ffprobe's
+ * 29.97002997002997 vs a browser mp4box average like 29.987378424530405 --
+ * the same real 30000/1001 video, differing only in how each side measured
+ * it). This is intentionally wide enough to treat common NTSC/pulldown
+ * representations of the same real rate (29.97 vs 30.00, 59.94 vs 60.00) as
+ * equivalent, while still rejecting genuinely different rates (29.97 vs
+ * 25.00, 30.00 vs 24.00).
+ */
+export const FRAME_RATE_ABSOLUTE_TOLERANCE_FPS = 0.05;
+export const FRAME_RATE_RELATIVE_TOLERANCE = 0.001; // 0.1%
+
+// Pure floating-point representation slop for the relative-tolerance
+// comparison only (e.g. 59.94 vs 60.00 is exactly 0.1% apart on paper, but
+// IEEE-754 arithmetic can land a hair either side of that boundary) -- not a
+// widening of the documented 0.1% tolerance itself.
+const RELATIVE_TOLERANCE_FLOATING_POINT_SLOP = 1e-9;
+
+/**
+ * Whether two frame rates plausibly describe the same real video, per the
+ * tolerance rule documented above. Order of arguments does not matter --
+ * both the absolute and relative checks are symmetric. Returns false (never
+ * throws) for non-finite input; callers must treat "frame rate unknown" as
+ * incompatible, never as a silent match.
+ */
+export function areFrameRatesCompatible(expectedFps, observedFps) {
+  if (!Number.isFinite(expectedFps) || !Number.isFinite(observedFps)) {
+    return false;
+  }
+  const absoluteDiff = Math.abs(expectedFps - observedFps);
+  if (absoluteDiff <= FRAME_RATE_ABSOLUTE_TOLERANCE_FPS) {
+    return true;
+  }
+  const relativeDiff = absoluteDiff / Math.max(expectedFps, observedFps);
+  return relativeDiff <= FRAME_RATE_RELATIVE_TOLERANCE + RELATIVE_TOLERANCE_FLOATING_POINT_SLOP;
+}
 
 /**
  * Parse an ffprobe `r_frame_rate` value (e.g. "30000/1001") into a float fps.
@@ -147,8 +192,9 @@ export function extractCsvVideoMetadata(rows) {
  * - 'harmless_difference': video_id and frame_rate_fps agree, only the raw
  *   video_filename string differs (e.g. different path/capitalization).
  * - 'conflicting_identity': video_id differs -- likely the wrong video entirely.
- * - 'conflicting_frame_rate': video_id agrees but frame_rate_fps differs
- *   beyond FRAME_RATE_EPSILON -- frame annotations would not be trustworthy.
+ * - 'conflicting_frame_rate': video_id agrees but frame_rate_fps is not
+ *   areFrameRatesCompatible() with the currently-open video's own rate --
+ *   frame annotations would not be trustworthy.
  *
  * Identity conflicts take priority over frame-rate conflicts when both are present.
  */
@@ -156,9 +202,7 @@ export function compareVideoIdentity(csvMeta, realMeta) {
   if (csvMeta.video_id !== realMeta.video_id) {
     return 'conflicting_identity';
   }
-  const rateKnown = typeof csvMeta.frame_rate_fps === 'number' && typeof realMeta.frame_rate_fps === 'number';
-  const rateMatches = rateKnown && Math.abs(csvMeta.frame_rate_fps - realMeta.frame_rate_fps) <= FRAME_RATE_EPSILON;
-  if (!rateMatches) {
+  if (!areFrameRatesCompatible(csvMeta.frame_rate_fps, realMeta.frame_rate_fps)) {
     return 'conflicting_frame_rate';
   }
   if (csvMeta.video_filename !== realMeta.video_filename) {

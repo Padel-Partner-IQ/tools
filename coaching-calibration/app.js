@@ -154,6 +154,16 @@ let currentFrame = null;
 let currentVideoUrl = null;
 let videoFileName = null;
 let realVideoMeta = null; // { video_id, video_filename, frame_rate_fps, video_metadata_provider, width, height, duration_sec } -- null until genuinely known, never defaults to 30fps
+// The canonical annotation-session frame rate/provider -- drives every frame<->time
+// conversion, frame stepping, and newly-exported row (via runMetadata below). Defaults
+// to the freshly-probed realVideoMeta rate, then becomes an imported Annotation CSV's
+// own frame_rate_fps/video_metadata_provider once that CSV passes compareVideoIdentity
+// (see applyCanonicalAnnotationFrameRate) -- the browser/ffprobe probe is only used to
+// confirm the loaded video is plausibly the same media, never as the annotation clock
+// once a CSV's own rate is available. realVideoMeta itself is left untouched and stays
+// visible separately in the video banner (updateVideoBanner) for diagnostics.
+let annotationFrameRateFps = null;
+let annotationFrameRateProvider = null;
 let runMetadata = null; // AnnotationRunMetadata for newly created/edited rows this session
 let pendingCsvText = null; // raw CSV text opened before the video (or before its metadata was known)
 let csvLoaded = false; // whether an existing CSV backs this session, vs. a fresh Annotation Mode session
@@ -167,7 +177,8 @@ let activePhaseId = null; // the currently selected shot's active phase in the p
 let phaseWorking = {}; // phaseId -> { qualityId, notes, observations } draft for the currently selected shot's active phase(s)
 
 // ---------------------------------------------------------------------------
-// Frame/time conversion -- always from the real, known frame rate
+// Frame/time conversion -- always from the canonical annotation-session
+// frame rate (annotationFrameRateFps), never a hardcoded default
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(time) {
@@ -177,23 +188,23 @@ function formatTimestamp(time) {
 function updateFrameInfo() {
   const time = Number.isFinite(video.currentTime) ? video.currentTime : 0;
   timestampEl.textContent = formatTimestamp(time);
-  if (!realVideoMeta || !Number.isFinite(realVideoMeta.frame_rate_fps)) {
+  if (!Number.isFinite(annotationFrameRateFps)) {
     frameNumberEl.textContent = '—';
     currentFrame = null;
     return;
   }
-  currentFrame = Math.round(time * realVideoMeta.frame_rate_fps);
+  currentFrame = Math.round(time * annotationFrameRateFps);
   frameNumberEl.textContent = currentFrame;
 }
 
 function stepFrame(delta) {
-  if (!controlsEnabled || !realVideoMeta) return;
-  video.currentTime = Math.min(video.duration || Infinity, Math.max(0, video.currentTime + delta / realVideoMeta.frame_rate_fps));
+  if (!controlsEnabled || !Number.isFinite(annotationFrameRateFps)) return;
+  video.currentTime = Math.min(video.duration || Infinity, Math.max(0, video.currentTime + delta / annotationFrameRateFps));
 }
 
 function seekToFrame(frame) {
-  if (!controlsEnabled || !realVideoMeta || frame === null || frame === undefined) return;
-  video.currentTime = Math.min(video.duration || Infinity, Math.max(0, frame / realVideoMeta.frame_rate_fps));
+  if (!controlsEnabled || !Number.isFinite(annotationFrameRateFps) || frame === null || frame === undefined) return;
+  video.currentTime = Math.min(video.duration || Infinity, Math.max(0, frame / annotationFrameRateFps));
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +221,8 @@ function resetSessionForNewVideo() {
   shots = [];
   selectedShotId = null;
   realVideoMeta = null;
+  annotationFrameRateFps = null;
+  annotationFrameRateProvider = null;
   runMetadata = null;
   pendingCsvText = null;
   csvLoaded = false;
@@ -320,6 +333,8 @@ async function runVideoLoad(loadSteps) {
     videoLoadState = 'failed';
     videoLoadError = describeEnvironmentError(error);
     realVideoMeta = null;
+    annotationFrameRateFps = null;
+    annotationFrameRateProvider = null;
     runMetadata = null;
     setControlsEnabled(false);
   } finally {
@@ -373,6 +388,8 @@ function describeVideoElementError() {
 
 function applyRealVideoMetadata(meta) {
   realVideoMeta = meta;
+  annotationFrameRateFps = meta.frame_rate_fps;
+  annotationFrameRateProvider = meta.video_metadata_provider;
   ensureRunMetadata();
   setControlsEnabled(true);
   reconcilePendingCsv();
@@ -388,6 +405,25 @@ function ensureRunMetadata() {
     sessionId: newSessionId(),
     createdAt: new Date().toISOString(),
   });
+}
+
+/**
+ * Once an imported Annotation CSV's own video metadata has passed
+ * compareVideoIdentity (exact_match/harmless_difference, never called for a
+ * conflict), its frame_rate_fps becomes this session's canonical annotation
+ * clock -- see the annotationFrameRateFps declaration above for why. Only
+ * frame_rate_fps/video_metadata_provider are adopted from the CSV; video_id/
+ * video_filename/session_id/created_at on runMetadata stay tied to this
+ * session's own real, currently-open video, exactly as before -- this is a
+ * narrower, more accurate clock, not a wholesale switch to the CSV's
+ * provenance.
+ */
+function applyCanonicalAnnotationFrameRate(csvMeta) {
+  annotationFrameRateFps = csvMeta.frame_rate_fps;
+  annotationFrameRateProvider = csvMeta.video_metadata_provider;
+  if (runMetadata) {
+    runMetadata = { ...runMetadata, frame_rate_fps: annotationFrameRateFps };
+  }
 }
 
 function updateVideoLoadUi() {
@@ -471,6 +507,7 @@ function applyCsvRows(rows) {
     if (comparison === 'harmless_difference') {
       showFeedback(`This CSV's own video_filename ("${csvMeta.video_filename}") differs from the open video's filename, but their video_id and frame rate agree -- continuing.`, 'info');
     }
+    applyCanonicalAnnotationFrameRate(csvMeta);
   }
 
   // The CSV's own frame_rate_fps/video_metadata_provider (already present on
@@ -478,6 +515,9 @@ function applyCsvRows(rows) {
   // freshly-derived realVideoMeta above is used only for this identity
   // comparison, never to rewrite imported provenance. See
   // docs/architecture/annotation-workbench.md#imported-metadata-provenance-is-immutable.
+  // (applyCanonicalAnnotationFrameRate above only updates this session's own
+  // forward-looking annotation clock/runMetadata -- it never edits csvMeta or
+  // the parsed `rows` themselves.)
   hideCsvError();
   shots = renumberShotIndices(rows);
   selectedShotId = null;
@@ -501,7 +541,15 @@ function buildMismatchMessage(comparison, csvMeta, realMeta) {
   if (comparison === 'conflicting_identity') {
     return `This Annotation CSV was recorded for a different video (video_id="${csvMeta.video_id}") than the one currently open (video_id="${realMeta.video_id}"). Open the matching video or CSV -- import blocked.`;
   }
-  return `This Annotation CSV's frame rate (${csvMeta.frame_rate_fps} fps) does not match the currently open video's real frame rate (${realMeta.frame_rate_fps} fps). Frame annotations would not be trustworthy -- import blocked.`;
+  // realMeta.frame_rate_fps is a measurement of the currently-open video, not
+  // this CSV's own recorded rate -- an ffprobe reading is exact, but an
+  // mp4box browser probe is only a best-effort estimate (see
+  // video_probe_browser.mjs), so the wording below must not call either one
+  // the video's "real" rate without qualification.
+  const realRateDescription = realMeta.video_metadata_provider === 'ffprobe'
+    ? `the currently open video's frame rate (${realMeta.frame_rate_fps} fps)`
+    : `the browser's estimated frame rate for the currently open video (${realMeta.frame_rate_fps} fps)`;
+  return `This Annotation CSV's frame rate (${csvMeta.frame_rate_fps} fps) does not match ${realRateDescription}. The difference is too large for frame annotations to be trusted, so import was blocked.`;
 }
 
 function showCsvError(message) {
@@ -1262,12 +1310,23 @@ function populateDefaultShotTypeSelect() {
 function updateVideoBanner() {
   videoNameEl.textContent = videoFileName || 'No video loaded';
   videoNameEl.classList.toggle('profile-empty', !videoFileName);
+  // Diagnostic only -- the currently-open video's own freshly-probed rate,
+  // regardless of what an imported CSV's canonical rate is. See
+  // updateSessionMeta for the rate that actually drives the annotation clock.
   videoFrameRateEl.textContent = formatFrameRateLabel(realVideoMeta);
 }
 
 function updateSessionMeta() {
   sessionVideoEl.textContent = videoFileName || 'No video loaded';
-  sessionFrameRateEl.textContent = formatFrameRateLabel(realVideoMeta) || '—';
+  // The canonical annotation-session rate -- realVideoMeta's own probe until
+  // an Annotation CSV imports successfully, then that CSV's own rate (see
+  // applyCanonicalAnnotationFrameRate). This is the rate frame/time
+  // conversion and newly-exported rows actually use, so it -- not
+  // realVideoMeta -- is what belongs in this session-facing display.
+  const annotationRateMeta = Number.isFinite(annotationFrameRateFps)
+    ? { frame_rate_fps: annotationFrameRateFps, video_metadata_provider: annotationFrameRateProvider }
+    : null;
+  sessionFrameRateEl.textContent = formatFrameRateLabel(annotationRateMeta) || '—';
   sessionCsvEl.textContent = csvLoaded ? 'Loaded existing annotation CSV' : 'None (new annotation session)';
 }
 
