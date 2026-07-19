@@ -135,6 +135,7 @@ export function validateLoadedProfile({ profileRaw, registryEntry, taxonomy = nu
   }
 
   const profile = normalizeProfile(profileRaw);
+  profile.status = registryEntry.status || profile.status;
   if (profile.profile_id !== registryEntry.profileId) {
     errors.push(`Profile file registered as "${registryEntry.profileId}" declares a different profile_id ("${profile.profile_id}").`);
   }

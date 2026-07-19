@@ -59,6 +59,8 @@ import { getPhaseFrame } from './phase_frame_mapping.mjs';
 import { getPhaseAssessment, capturePhaseFrame, clearPhase, isPhaseCaptured } from './phase_assessment.mjs';
 import { findPhaseFrameOwner, buildFrameInUseErrorMessage } from './duplicate_frame.mjs';
 import { computeShotReadiness } from './shot_readiness.mjs';
+import { computeAnnotationCompleteness, describeAnnotationCompleteness } from './annotation_completeness.mjs';
+import { BUILD_METADATA } from './build_metadata.mjs';
 
 const environment = createEnvironment(window);
 
@@ -71,6 +73,7 @@ const VIDEO_LOAD_TIMEOUT_MS = 20000;
 // Elements
 // ---------------------------------------------------------------------------
 
+const buildProvenanceEl = document.getElementById('build-provenance');
 const video = document.getElementById('video');
 const videoFileInput = document.getElementById('video-file');
 const csvFileInput = document.getElementById('csv-file');
@@ -104,7 +107,6 @@ const shotsCountEl = document.getElementById('shots-count');
 const shotsStripEl = document.getElementById('shots-strip');
 const shotsStripEmptyEl = document.getElementById('shots-strip-empty');
 
-const doneEditingButton = document.getElementById('done-editing');
 const shotDetailEmptyEl = document.getElementById('shot-detail-empty');
 const shotDetailBodyEl = document.getElementById('shot-detail-body');
 const shotDetailIdEl = document.getElementById('shot-detail-id');
@@ -120,9 +122,12 @@ const shotDeleteButton = document.getElementById('shot-delete');
 const shotDetailShotClassEl = document.getElementById('shot-detail-shot-class');
 const shotDetailShotTypeEl = document.getElementById('shot-detail-shot-type');
 const shotDetailShotVariantEl = document.getElementById('shot-detail-shot-variant');
+const shotDetailHitterEl = document.getElementById('shot-detail-hitter');
+const shotDetailCompletenessEl = document.getElementById('shot-detail-completeness');
 const shotDetailProfileEmptyEl = document.getElementById('shot-detail-profile-empty');
 const shotDetailProfileBodyEl = document.getElementById('shot-detail-profile-body');
 const shotDetailProfileNameEl = document.getElementById('shot-detail-profile-name');
+const shotDetailProfileWarningEl = document.getElementById('shot-detail-profile-warning');
 const shotDetailReadinessEl = document.getElementById('shot-detail-readiness');
 const phaseSummaryListEl = document.getElementById('phase-summary-list');
 const phaseSummaryBlockEl = document.getElementById('phase-summary-block');
@@ -476,7 +481,11 @@ function loadCsvText(text) {
     // the shots, but hold everything else pending -- no editing or seeking
     // until a video opens and its identity is validated below.
     pendingCsvText = text;
-    shots = renumberShotIndices(rows);
+    // withCompleteness recomputes every imported row's v2 completeness
+    // columns from its own data and this session's freshly-resolved
+    // profiles -- a v1-migrated or hand-edited file's stored values are
+    // never trusted as-is (see the annotation_csv schema-evolution docstring).
+    shots = renumberShotIndices(rows.map(withCompleteness));
     selectedShotId = null;
     csvLoaded = true;
     setControlsEnabled(false);
@@ -519,7 +528,10 @@ function applyCsvRows(rows) {
   // forward-looking annotation clock/runMetadata -- it never edits csvMeta or
   // the parsed `rows` themselves.)
   hideCsvError();
-  shots = renumberShotIndices(rows);
+  // withCompleteness recomputes every imported row's v2 completeness columns
+  // from its own data and this session's freshly-resolved profiles -- a
+  // v1-migrated or hand-edited file's stored values are never trusted as-is.
+  shots = renumberShotIndices(rows.map(withCompleteness));
   selectedShotId = null;
   csvLoaded = true;
   pendingCsvText = null;
@@ -578,8 +590,8 @@ function setControlsEnabled(enabled) {
 /**
  * Add Shot is disabled whenever a shot is currently selected -- competing
  * incomplete shots and confusing state otherwise. Re-enabled only once the
- * coach leaves the current-shot workflow (Save Shot/Done Editing/Delete
- * Shot all clear selectedShotId before the next render). Deliberately
+ * coach leaves the current-shot workflow (Save Shot/Delete Shot both clear
+ * selectedShotId before the next render). Deliberately
  * independent of whether the selected shot is complete -- the rule is
  * purely "a shot is selected" vs "no shot is selected", nothing else.
  * Called from renderShotDetail(), which every path that changes
@@ -599,6 +611,21 @@ function resolveActiveProfileAndPhases(shot) {
   const profile = shot ? resolveProfileForShot(shot, taxonomy, profileIndex) : null;
   const phases = profile ? buildPhaseViewModels(profile, ontology) : [];
   return { profile, phases };
+}
+
+/**
+ * Recomputes and overwrites a shot's v2 completeness columns from its own
+ * current data and freshly-resolved profile -- the one canonical
+ * completeness calculation (annotation_completeness.mjs), applied on every
+ * edit (mutateSelectedShot), new-shot creation, and CSV import, so a stale
+ * value can never silently survive an edit or an import that predates the
+ * taxonomy/profile registry finishing its load. See
+ * docs/architecture/contact-point-annotation-csv.md's "Schema evolution:
+ * v1 -> v2".
+ */
+function withCompleteness(shot) {
+  const { profile, phases } = resolveActiveProfileAndPhases(shot);
+  return { ...shot, ...computeAnnotationCompleteness(shot, profile, phases) };
 }
 
 /** The first phase (in profile order) without both a captured frame and a quality rating, or the first phase if all are captured. */
@@ -719,6 +746,7 @@ function renderShotDetail() {
   if (!shot) {
     shotDetailEmptyEl.hidden = false;
     shotDetailBodyEl.hidden = true;
+    saveShotButton.disabled = true;
     return;
   }
 
@@ -742,8 +770,41 @@ function renderShotDetail() {
   shotDeleteButton.disabled = !controlsEnabled || !canDeleteShot(shot);
   shotDeleteButton.hidden = !canDeleteShot(shot);
 
+  // Hitter identity, classification, and General Notes are all editable
+  // regardless of whether a coaching profile resolves for this shot -- see
+  // "Classification must remain independent of profile availability" in
+  // docs/architecture/annotation-workbench.md.
+  shotDetailHitterEl.value = shot.hitter_id || '';
+  shotDetailHitterEl.disabled = !controlsEnabled;
+  overallNotesEl.value = shot.notes || '';
+  overallNotesEl.disabled = !controlsEnabled;
+
   renderClassificationFields(shot);
+  renderCompletenessSummary(shot);
   renderResolvedProfile(shot);
+
+  // Save Shot only ever depends on a shot being selected and controls being
+  // enabled -- never on profile availability or phase/coaching-assessment
+  // completeness (advisory only, see renderCompletenessSummary). This is the
+  // single place Save Shot's enabled state is decided.
+  saveShotButton.disabled = !controlsEnabled;
+}
+
+/**
+ * Always-visible, three-dimension completeness summary (contact/phase/
+ * coaching-assessment) -- rendered regardless of whether a profile resolves,
+ * so completeness stays visible and honest for every shot without ever
+ * gating Save Shot or export. The itemised phase "missing" list (profile-
+ * dependent) is folded in when available, via the same computeShotReadiness
+ * this app already uses for the shot-strip badge -- one canonical
+ * calculation, not a second one.
+ */
+function renderCompletenessSummary(shot) {
+  const { profile, phases } = resolveActiveProfileAndPhases(shot);
+  const completeness = computeAnnotationCompleteness(shot, profile, phases);
+  const readiness = computeShotReadiness(shot, profile, phases);
+  const missingPhaseItems = readiness.missing.filter((item) => item !== 'Overall Quality');
+  shotDetailCompletenessEl.textContent = describeAnnotationCompleteness(completeness, { missingPhaseItems });
 }
 
 /**
@@ -802,11 +863,12 @@ function renderResolvedProfile(shot) {
     overallAssessmentBlockEl.hidden = true;
     // The phase editor/progress/summary now live above Shot Detail, no
     // longer nested inside shotDetailProfileBodyEl -- hide them explicitly
-    // here since a profile-less shot has no phases to show.
+    // here since a profile-less shot has no phases to show. Save Shot's own
+    // enabled state is decided once, centrally, in renderShotDetail --
+    // never here -- so a missing profile never blocks saving.
     phaseCardEl.hidden = true;
     phaseProgressBlockEl.hidden = true;
     phaseSummaryBlockEl.hidden = true;
-    saveShotButton.disabled = true;
     return;
   }
 
@@ -816,6 +878,11 @@ function renderResolvedProfile(shot) {
   phaseProgressBlockEl.hidden = false;
   phaseSummaryBlockEl.hidden = false;
   shotDetailProfileNameEl.textContent = profile.profile_name;
+  const isDraftProfile = profile.status === 'draft';
+  shotDetailProfileWarningEl.hidden = !isDraftProfile;
+  shotDetailProfileWarningEl.textContent = isDraftProfile
+    ? 'Draft coaching profile — usable for annotation, but its coaching observations require coach review.'
+    : '';
 
   // The resolved profile can change (a coach reclassifying shot_type) out
   // from under an activePhaseId that no longer exists in the new profile --
@@ -840,7 +907,6 @@ function renderResolvedProfile(shot) {
   }[readiness.status];
   shotDetailReadinessEl.textContent = readinessText;
   shotDetailReadinessEl.classList.toggle('progress-complete', readiness.status === 'ready');
-  saveShotButton.disabled = !controlsEnabled || readiness.status !== 'ready';
 }
 
 // ---------------------------------------------------------------------------
@@ -993,13 +1059,13 @@ function renderQualityGroup(container, options, selectedId, onSelect) {
   }
 }
 
+/** Overall Quality only -- General Notes (shot.notes) is rendered unconditionally in renderShotDetail, since it must remain editable without a resolved profile. */
 function renderOverallAssessment(shot, profile) {
   const qualityOptions = buildQualityOptions(profile, ontology);
   renderQualityGroup(overallQualityOptionsEl, qualityOptions, shot.overall_quality_id, (qualityId) => {
     const nextValue = shot.overall_quality_id === qualityId ? '' : qualityId;
     mutateSelectedShot((candidate) => ({ ...candidate, overall_quality_id: nextValue }));
   });
-  overallNotesEl.value = shot.notes || '';
 }
 
 function handleCapturePhase() {
@@ -1082,7 +1148,10 @@ function withAnnotatorStamp(row) {
 function mutateSelectedShot(mutator) {
   const shot = shots.find((candidate) => candidate.shot_id === selectedShotId);
   if (!shot) return;
-  const updated = withAnnotatorStamp(mutator(shot));
+  // withCompleteness recomputes the v2 completeness columns from this edit's
+  // own resulting data and freshly-resolved profile -- every edit keeps them
+  // current, so a stale value can never silently survive an edit.
+  const updated = withCompleteness(withAnnotatorStamp(mutator(shot)));
   shots = renumberShotIndices(shots.map((candidate) => (candidate.shot_id === updated.shot_id ? updated : candidate)));
   selectedShotId = updated.shot_id;
   renderShotsStrip();
@@ -1144,11 +1213,11 @@ function handleAddShot() {
     typeId: defaultShotTypeEl.value || null,
     variantId: null,
   });
-  const newShot = {
+  const newShot = withCompleteness({
     ...withAnnotatorStamp(createManualShot({ frame: currentFrame, shots, runMetadata, defaultShotType: defaultLabels.shot_type })),
     shot_class: defaultLabels.shot_class,
     saved: false,
-  };
+  });
   // Routed through the one canonical selectShot() (see its own doc comment),
   // but a freshly-created manual shot deliberately opens at Ready Position
   // rather than the usual Contact Point preference -- for manual labelling
@@ -1161,15 +1230,7 @@ function handleAddShot() {
   showFeedback(`Added ${newShot.shot_id} at frame ${currentFrame}.`, 'success');
 }
 
-/**
- * Commits the selected shot into the annotation session -- reuses the exact
- * same "complete" definition already computed for the readiness badge
- * (computeShotReadiness's 'ready' status: every configured phase captured
- * with a Phase Quality, plus Overall Quality set). Deselects afterward so
- * the existing, unchanged Add Shot button is the obvious next action for
- * the next shot -- no new "next shot" UI needed.
- */
-/** Clears the current shot selection, hiding the Shot Detail/phase editor and returning to the saved-shots strip -- shared by Save Shot and Done Editing. */
+/** Clears the current shot selection, hiding the Shot Detail/phase editor and returning to the saved-shots strip. Save Shot deselects afterward so the existing, unchanged Add Shot button is the obvious next action for the next shot -- no new "next shot" UI needed. */
 function deselectShot() {
   selectedShotId = null;
   activePhaseId = null;
@@ -1178,31 +1239,30 @@ function deselectShot() {
   renderShotDetail();
 }
 
+/**
+ * Save Shot persists the current shot's edits -- unconditionally. Every edit
+ * (Capture/Clear/Overall Quality/notes/hitter/classification) already
+ * mutates the shot in memory as it happens; Save Shot's own job is only to
+ * mark the shot as committed for export (`saved: true`, see exportableShots)
+ * and exit the editor. It must never require every phase, Overall Quality,
+ * a resolved profile, or a non-draft profile -- completeness is advisory
+ * only (see renderCompletenessSummary/describeAnnotationCompleteness) and is
+ * surfaced here purely as informational feedback, never a gate. Saving an
+ * incomplete shot never invents phase frames, assessments, classifications,
+ * or coaching observations -- only `saved`/annotator/completeness columns
+ * are touched.
+ */
 function handleSaveShot() {
   const shot = getSelectedShot();
   if (!shot || !controlsEnabled) return;
   const { profile, phases } = resolveActiveProfileAndPhases(shot);
+  const completeness = computeAnnotationCompleteness(shot, profile, phases);
   const readiness = computeShotReadiness(shot, profile, phases);
-  if (readiness.status !== 'ready') {
-    showFeedback(`Complete every phase and Overall Quality before saving this shot. Missing: ${readiness.missing.join(', ')}.`, 'error');
-    return;
-  }
   const shotId = shot.shot_id;
   mutateSelectedShot((candidate) => ({ ...candidate, saved: true }));
   deselectShot();
-  showFeedback(`${shotId} saved. Click Add Shot at Current Frame to start the next shot.`, 'success');
-}
-
-/**
- * "Done Editing" -- an explicit way to leave the editor for a reopened saved
- * shot without triggering another save. Edits already mutated the shot in
- * memory as they happened (Capture/Clear/Overall Quality/notes all commit
- * immediately); this only clears the selection and returns focus to the
- * saved-shots strip, leaving the video at its current frame.
- */
-function handleDoneEditing() {
-  deselectShot();
-  addShotButton.focus();
+  const missingPhaseItems = readiness.missing.filter((item) => item !== 'Overall Quality');
+  showFeedback(`${shotId} saved. ${describeAnnotationCompleteness(completeness, { missingPhaseItems })}`, 'success');
 }
 
 /**
@@ -1231,6 +1291,18 @@ function handleShotVariantChange() {
   const previousIds = classificationIdsForShot(taxonomy, getSelectedShot());
   const labels = classificationLabelsForIds(taxonomy, { ...previousIds, variantId: shotDetailShotVariantEl.value || null });
   mutateSelectedShot((shot) => ({ ...shot, shot_variant: labels.shot_variant }));
+}
+
+/**
+ * Hitter identity is a structured, coach-entered, stable human annotation
+ * label (`hitter_id`) -- open coaching vocabulary, not a fixed enum, blank
+ * valid for unknown/unassigned. It is never derived from a runtime
+ * tracking/player id and works identically whether or not a coaching
+ * profile resolves for this shot (see "Add structured hitter identity" in
+ * docs/architecture/contact-point-annotation-csv.md).
+ */
+function handleHitterChange() {
+  mutateSelectedShot((shot) => ({ ...shot, hitter_id: shotDetailHitterEl.value.trim() }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1337,7 +1409,10 @@ function updateSessionMeta() {
  * no "unsaved" concept and is exportable as before.
  */
 function exportableShots() {
-  return shots.filter((shot) => shot.saved !== false);
+  // withCompleteness is a final, defensive recompute immediately before
+  // serialization -- completeness must never be stale in the file actually
+  // written to disk, regardless of when in the session it was last touched.
+  return shots.filter((shot) => shot.saved !== false).map(withCompleteness);
 }
 
 /**
@@ -1413,6 +1488,7 @@ exportButton.addEventListener('click', () => exportAnnotationCsv());
 shotDetailShotClassEl.addEventListener('change', () => handleShotClassChange());
 shotDetailShotTypeEl.addEventListener('change', () => handleShotTypeChange());
 shotDetailShotVariantEl.addEventListener('change', () => handleShotVariantChange());
+shotDetailHitterEl.addEventListener('input', () => handleHitterChange());
 defaultShotClassEl.addEventListener('change', () => populateDefaultShotTypeSelect());
 
 annotatorEl.addEventListener('input', () => handleAnnotatorInput());
@@ -1420,7 +1496,6 @@ annotatorEl.addEventListener('input', () => handleAnnotatorInput());
 phaseCaptureButton.addEventListener('click', () => handleCapturePhase());
 phaseClearButton.addEventListener('click', () => handleClearPhase());
 saveShotButton.addEventListener('click', () => handleSaveShot());
-doneEditingButton.addEventListener('click', () => handleDoneEditing());
 phaseNotesEl.addEventListener('input', () => {
   const working = phaseWorking[activePhaseId];
   if (working) working.notes = phaseNotesEl.value;
@@ -1466,7 +1541,21 @@ document.addEventListener('keydown', (event) => {
 // Init
 // ---------------------------------------------------------------------------
 
+/**
+ * Concise, restrained build provenance next to the app title (e.g.
+ * "v0.3.0 · build a1b2c3d"), read entirely from the generated
+ * build_metadata.mjs -- never hardcoded or fabricated here. See
+ * docs/tooling/annotation-workbench-development.md#build-metadata for how
+ * buildId is derived (CI run id, git SHA, `-dirty`, or the explicit
+ * 'development' fallback) and why the same module backs both this display
+ * and automated inspection.
+ */
+function renderBuildProvenance() {
+  buildProvenanceEl.textContent = `v${BUILD_METADATA.version} · build ${BUILD_METADATA.buildId}`;
+}
+
 function init() {
+  renderBuildProvenance();
   updateVideoBanner();
   updateSessionMeta();
   updateExportState();

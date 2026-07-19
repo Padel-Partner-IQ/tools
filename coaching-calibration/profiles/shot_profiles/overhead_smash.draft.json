@@ -1,0 +1,17 @@
+{
+  "schema_version": "2", "profile_id": "overhead_smash", "profile_version": "0.2.0", "profile_name": "Smash — Draft",
+  "description": "Hypothesis-led generic Smash draft adapted from neighbouring overhead profiles. Coach review is required before its observations are treated as coaching guidance.",
+  "status": "draft", "review": { "status": "coach_review_required", "basis": "inferred_from_neighbouring_profiles", "limitations": "Smash is listed as a future taxonomy category; flat and kick variants need separate coach review." },
+  "classification": { "shot_class": { "id": "overhead", "label": "Overhead" }, "shot_type": { "id": "smash", "label": "Smash" }, "shot_variant": null },
+  "vocabulary": { "phases": { "version": "1.0.0" }, "observations": { "version": "1.0.0" }, "ratings": { "version": "1.0.0" }, "quality_assessments": { "version": "1.0.0" } },
+  "phases": [
+    { "id": "ready_position", "shortcut": "1", "observations": ["stance_width", "knee_bend", "body_balance", "racket_side_preparation"] },
+    { "id": "max_take_back", "shortcut": "2", "observations": ["shoulder_turn", "hip_rotation", "shoulder_hip_separation", "non_hitting_arm_extension", "elbow_position", "racket_side_preparation", "knee_bend", "body_balance", "shoulder_vertical_alignment"] },
+    { "id": "contact_point", "shortcut": "3", "observations": ["shoulder_turn", "hip_rotation", "hitting_arm_extension", "non_hitting_arm_extension", "elbow_position", "contact_height", "contact_distance", "body_balance", "shoulder_vertical_alignment", "weight_transfer"] },
+    { "id": "max_follow_through", "shortcut": "4", "observations": ["shoulder_turn", "hip_rotation", "hitting_arm_extension", "elbow_position", "body_balance", "weight_transfer", "follow_through_shape"] },
+    { "id": "recovery_position", "shortcut": "5", "observations": ["knee_bend", "body_balance", "stance_width"] }
+  ],
+  "ratings": ["not_assessed", "too_little", "good", "excellent", "too_much", "unclear"], "quality_ratings": ["not_assessed", "excellent", "good", "needs_work", "red_flag", "unclear"],
+  "capture": { "requires_overall_quality": false, "requires_phase_quality": false, "requires_all_phases_for_export": false, "allow_duplicate_frame_labels_with_warning": true },
+  "export": { "include_profile_version": true, "include_ontology_version": true, "include_overall_quality": true, "include_overall_notes": true, "include_phase_quality": true, "include_phase_notes": true, "include_structured_observations": true }
+}

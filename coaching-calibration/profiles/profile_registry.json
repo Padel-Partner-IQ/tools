@@ -45,36 +45,91 @@
     },
     {
       "profile_id": "overhead_bandeja",
-      "enabled": false,
-      "status": "example",
+      "enabled": true,
+      "status": "draft",
       "match": {
         "shot_class": "overhead",
         "shot_type": "bandeja",
         "shot_variant": null
       },
-      "file": "shot_profiles/overhead_bandeja.example.json"
+      "file": "shot_profiles/overhead_bandeja.draft.json"
     },
     {
       "profile_id": "overhead_vibora",
-      "enabled": false,
-      "status": "example",
+      "enabled": true,
+      "status": "draft",
       "match": {
         "shot_class": "overhead",
         "shot_type": "vibora",
         "shot_variant": null
       },
-      "file": "shot_profiles/overhead_vibora.example.json"
+      "file": "shot_profiles/overhead_vibora.draft.json"
     },
     {
       "profile_id": "overhead_smash",
-      "enabled": false,
-      "status": "example",
+      "enabled": true,
+      "status": "draft",
       "match": {
         "shot_class": "overhead",
         "shot_type": "smash",
         "shot_variant": null
       },
-      "file": "shot_profiles/overhead_smash.example.json"
+      "file": "shot_profiles/overhead_smash.draft.json"
+    },
+    {
+      "profile_id": "volley_forehand",
+      "enabled": true,
+      "status": "draft",
+      "match": {
+        "shot_class": "volley",
+        "shot_type": "forehand_volley",
+        "shot_variant": null
+      },
+      "file": "shot_profiles/volley_forehand.draft.json"
+    },
+    {
+      "profile_id": "volley_backhand",
+      "enabled": true,
+      "status": "draft",
+      "match": {
+        "shot_class": "volley",
+        "shot_type": "backhand_volley",
+        "shot_variant": null
+      },
+      "file": "shot_profiles/volley_backhand.draft.json"
+    },
+    {
+      "profile_id": "serve_forehand",
+      "enabled": true,
+      "status": "draft",
+      "match": {
+        "shot_class": "serve",
+        "shot_type": "forehand_serve",
+        "shot_variant": null
+      },
+      "file": "shot_profiles/serve_forehand.draft.json"
+    },
+    {
+      "profile_id": "groundstroke_forehand_lob",
+      "enabled": true,
+      "status": "draft",
+      "match": {
+        "shot_class": "groundstroke",
+        "shot_type": "forehand",
+        "shot_variant": "lob"
+      },
+      "file": "shot_profiles/groundstroke_forehand_lob.draft.json"
+    },
+    {
+      "profile_id": "groundstroke_backhand_lob",
+      "enabled": true,
+      "status": "draft",
+      "match": {
+        "shot_class": "groundstroke",
+        "shot_type": "backhand",
+        "shot_variant": "lob"
+      },
+      "file": "shot_profiles/groundstroke_backhand_lob.draft.json"
     }
   ]
 }

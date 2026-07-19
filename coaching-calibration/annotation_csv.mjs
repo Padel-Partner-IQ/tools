@@ -21,11 +21,11 @@
 // - parseAnnotationCsv -- parse CSV text into typed rows.
 // - validateAnnotationRows -- check parsed rows for problems.
 
-export const CANONICAL_SCHEMA_VERSION = '1';
-// An array, not a single value: adding a future "2" is a one-line change here
+export const CANONICAL_SCHEMA_VERSION = '2';
+// An array, not a single value: adding a future "3" is a one-line change here
 // plus a new entry in SCHEMA_VERSION_READERS, without touching this version's
 // logic. Mirrors the Python SUPPORTED_SCHEMA_VERSIONS set.
-export const SUPPORTED_SCHEMA_VERSIONS = ['1'];
+export const SUPPORTED_SCHEMA_VERSIONS = ['1', '2'];
 
 export const ANNOTATION_TOOL_VERSION = 'annotation_workbench/1.0';
 
@@ -37,6 +37,47 @@ export const VALID_SOURCES = ['automated', 'manual'];
 // anything today. "unknown": legacy/imported rows where provenance genuinely isn't
 // known -- not a default to fall back to casually.
 export const VALID_VIDEO_METADATA_PROVIDERS = ['ffprobe', 'mp4box', 'manual', 'unknown'];
+
+// v2: whether reviewed_contact_frame has actually been captured. See
+// "Schema evolution: v1 -> v2" below.
+export const CONTACT_ANNOTATION_STATUS_PRESENT = 'present';
+export const CONTACT_ANNOTATION_STATUS_ABSENT = 'absent';
+export const VALID_CONTACT_ANNOTATION_STATUSES = [CONTACT_ANNOTATION_STATUS_PRESENT, CONTACT_ANNOTATION_STATUS_ABSENT];
+
+// v2: shared three-state vocabulary for phase_annotation_status/coaching_assessment_status.
+export const COMPLETENESS_NOT_APPLICABLE = 'not_applicable';
+export const COMPLETENESS_INCOMPLETE = 'incomplete';
+export const COMPLETENESS_COMPLETE = 'complete';
+export const VALID_COMPLETENESS_STATUSES = [COMPLETENESS_NOT_APPLICABLE, COMPLETENESS_INCOMPLETE, COMPLETENESS_COMPLETE];
+
+/**
+ * Schema evolution: v1 -> v2 (mirrors annotation_csv.py exactly -- see that
+ * module's docstring for the full rationale).
+ *
+ * v2 adds four columns, appended after the full v1 shape:
+ *
+ * - `hitter_id` -- an open, coach-entered stable human annotation label
+ *   (e.g. "player_1", "player_2"), blank when unknown/unassigned. Never
+ *   derived from a runtime tracking/player id -- those are transient,
+ *   per-run track identities; a coach's hitter_id is a stable annotation
+ *   label that must not be conflated with, or auto-populated from, one.
+ * - `contact_annotation_status` ("present"/"absent") -- derived from
+ *   `reviewed_contact_frame`.
+ * - `phase_annotation_status` ("not_applicable"/"incomplete"/"complete") --
+ *   whether every phase the shot's resolved coaching profile configures has
+ *   been captured. The Annotation Workbench (this app) is the canonical,
+ *   single calculation for this value (see annotation_completeness.mjs) --
+ *   it has full access to profile resolution, unlike the Python backend.
+ * - `coaching_assessment_status` ("not_applicable"/"incomplete"/"complete")
+ *   -- whether Overall Quality has been set.
+ *
+ * None of these four is a technical judgement of the underlying stroke --
+ * they describe the annotation record's own completeness, kept distinct
+ * from contact-point review provenance (review_status,
+ * automated_contact_frame vs reviewed_contact_frame, review_recommended/
+ * review_flags): migrated or freshly-built completeness metadata must never
+ * imply an automated contact was human-approved.
+ */
 
 export const CANONICAL_ANNOTATION_CSV_FIELDNAMES = [
   'schema_version',
@@ -69,6 +110,12 @@ export const CANONICAL_ANNOTATION_CSV_FIELDNAMES = [
   'overall_quality_id',
   'notes',
   'annotator',
+  // v2 additions -- appended after the full v1 shape so every existing
+  // column keeps its position. See "Schema evolution: v1 -> v2" above.
+  'hitter_id',
+  'contact_annotation_status',
+  'phase_annotation_status',
+  'coaching_assessment_status',
 ];
 
 const FRAME_COLUMNS = [
@@ -89,8 +136,16 @@ const LIST_COLUMNS = ['contributing_providers', 'review_flags'];
 // every write always emits all of CANONICAL_ANNOTATION_CSV_FIELDNAMES
 // regardless of what was read. Mirrors Python's _OPTIONAL_ON_IMPORT_COLUMNS;
 // the general mechanism for future additive columns, not a one-off special
-// case for phase_assessments alone.
-const OPTIONAL_ON_IMPORT_COLUMNS = ['phase_assessments'];
+// case for phase_assessments alone -- the v2 columns below reuse it exactly
+// the same way (a v1 file's header simply never had them).
+const OPTIONAL_ON_IMPORT_COLUMNS = [
+  'phase_assessments',
+  'hitter_id',
+  'contact_annotation_status',
+  'phase_annotation_status',
+  'coaching_assessment_status',
+];
+const V2_ONLY_COLUMNS = ['hitter_id', 'contact_annotation_status', 'phase_annotation_status', 'coaching_assessment_status'];
 
 /**
  * Raised when one or more rows fail canonical annotation CSV validation, or
@@ -176,6 +231,15 @@ export function buildCanonicalRow(shot, { runMetadata, overrides = {} } = {}) {
     overall_quality_id: '',
     notes: '',
     annotator: '',
+    // v2: a freshly-detected automated row has no coach-confirmed hitter, no
+    // reviewed contact frame, and no classification -- so both
+    // profile-dependent dimensions are honestly not_applicable (blank
+    // classification can never resolve a coaching profile) and contact
+    // annotation is genuinely absent (never fabricated as reviewed).
+    hitter_id: '',
+    contact_annotation_status: CONTACT_ANNOTATION_STATUS_ABSENT,
+    phase_annotation_status: COMPLETENESS_NOT_APPLICABLE,
+    coaching_assessment_status: COMPLETENESS_NOT_APPLICABLE,
   };
   return { ...row, ...overrides };
 }
@@ -266,9 +330,11 @@ function parseOptionalBool(rawValue) {
   return rawValue.trim().toLowerCase() === 'true';
 }
 
-function readV1Row(rawRow) {
+/** Shared parsing for every column that has existed since v1 -- used by both readV1Row and readV2Row so neither independently reimplements the same int/float/bool/list parsing rules. */
+function parseBaseV1Columns(rawRow) {
   const parsed = {};
   for (const column of CANONICAL_ANNOTATION_CSV_FIELDNAMES) {
+    if (V2_ONLY_COLUMNS.includes(column)) continue;
     const rawValue = rawRow[column] ?? '';
     if (FRAME_COLUMNS.includes(column) || column === 'shot_index') {
       parsed[column] = parseOptionalInt(rawValue);
@@ -285,7 +351,72 @@ function readV1Row(rawRow) {
   return parsed;
 }
 
-const SCHEMA_VERSION_READERS = { 1: readV1Row };
+/** Fully deterministic from reviewed_contact_frame alone -- see "Schema evolution: v1 -> v2". Used for v1 migration and as v2's own validated default. */
+function defaultContactAnnotationStatus(parsedRow) {
+  return parsedRow.reviewed_contact_frame !== null && parsedRow.reviewed_contact_frame !== undefined
+    ? CONTACT_ANNOTATION_STATUS_PRESENT
+    : CONTACT_ANNOTATION_STATUS_ABSENT;
+}
+
+function rowHasAnyClassification(parsedRow) {
+  return Boolean(parsedRow.shot_class) || Boolean(parsedRow.shot_type);
+}
+
+/**
+ * Conservative default for a migrated v1 row: blank classification
+ * deterministically means no coaching profile could ever resolve
+ * (not_applicable); once classified, this function cannot verify phase
+ * completeness without a resolved profile, so it defaults to the
+ * conservative "incomplete" rather than assuming "complete" without
+ * evidence. Superseded the moment app.js recomputes it via the canonical
+ * annotation_completeness.mjs, which has real profile access.
+ */
+function defaultPhaseAnnotationStatus(parsedRow) {
+  if (!rowHasAnyClassification(parsedRow)) return COMPLETENESS_NOT_APPLICABLE;
+  return COMPLETENESS_INCOMPLETE;
+}
+
+/** Unlike phase completeness, this dimension depends only on overall_quality_id (once classified) -- a precise value, not a placeholder. */
+function defaultCoachingAssessmentStatus(parsedRow) {
+  if (!rowHasAnyClassification(parsedRow)) return COMPLETENESS_NOT_APPLICABLE;
+  return parsedRow.overall_quality_id ? COMPLETENESS_COMPLETE : COMPLETENESS_INCOMPLETE;
+}
+
+/**
+ * Parse a v1 row and migrate it to the current v2 in-memory shape. Every v1
+ * field is preserved exactly; the four v2 columns are derived
+ * deterministically from data already on the row -- never fabricated -- and
+ * the returned row's own schema_version becomes "2", since the row is now
+ * genuinely v2-shaped in memory with real values in every v2 field.
+ */
+function readV1Row(rawRow) {
+  const parsed = parseBaseV1Columns(rawRow);
+  parsed.hitter_id = '';
+  parsed.contact_annotation_status = defaultContactAnnotationStatus(parsed);
+  parsed.phase_annotation_status = defaultPhaseAnnotationStatus(parsed);
+  parsed.coaching_assessment_status = defaultCoachingAssessmentStatus(parsed);
+  parsed.schema_version = '2';
+  return parsed;
+}
+
+/**
+ * Parse a genuine v2 row. Trusts the file's own v2 column values when the
+ * column is present in the header at all; falls back to the same
+ * deterministic defaults readV1Row uses only if a v2 column is entirely
+ * absent from the header (the OPTIONAL_ON_IMPORT_COLUMNS leniency), a
+ * defensive case a genuine writer should never produce.
+ */
+function readV2Row(rawRow) {
+  const parsed = parseBaseV1Columns(rawRow);
+  parsed.hitter_id = rawRow.hitter_id ?? '';
+  parsed.contact_annotation_status = rawRow.contact_annotation_status || defaultContactAnnotationStatus(parsed);
+  parsed.phase_annotation_status = rawRow.phase_annotation_status || defaultPhaseAnnotationStatus(parsed);
+  parsed.coaching_assessment_status = rawRow.coaching_assessment_status || defaultCoachingAssessmentStatus(parsed);
+  parsed.schema_version = rawRow.schema_version ?? CANONICAL_SCHEMA_VERSION;
+  return parsed;
+}
+
+const SCHEMA_VERSION_READERS = { 1: readV1Row, 2: readV2Row };
 
 /**
  * Parse canonical annotation CSV text into typed rows.
@@ -297,8 +428,8 @@ const SCHEMA_VERSION_READERS = { 1: readV1Row };
  * validateAnnotationRows, called separately by the caller.
  *
  * Columns in OPTIONAL_ON_IMPORT_COLUMNS (e.g. phase_assessments, added after
- * this workbench had real users) may be absent from an older file without
- * throwing -- readV1Row's `rawRow[column] ?? ''` fallback fills in that
+ * this workbench had real users, plus every v2 addition) may be absent from
+ * an older file without throwing -- each reader's own fallback fills in that
  * column's default for every row, so the file upgrades to the full canonical
  * shape in memory. Any other missing column still throws immediately, since
  * that indicates a genuinely malformed file rather than one predating a
@@ -330,9 +461,11 @@ export function parseAnnotationCsv(text) {
     throw new AnnotationValidationError([`Unsupported schema_version(s): ${unsupported.sort().join(', ')}.`]);
   }
 
-  const readerKey = schemaVersions.values().next().value ?? CANONICAL_SCHEMA_VERSION;
-  const readerFn = SCHEMA_VERSION_READERS[readerKey] ?? readV1Row;
-  return rawRows.map(readerFn);
+  // Dispatched per row (not once for the whole file): each row's own
+  // schema_version selects its reader. In practice every row of one export
+  // shares the same schema_version (it is run-level metadata denormalized
+  // onto every row), but nothing here assumes that.
+  return rawRows.map((rawRow) => (SCHEMA_VERSION_READERS[rawRow.schema_version] ?? readV1Row)(rawRow));
 }
 
 /**
@@ -438,6 +571,7 @@ function validateRow(row, rowNumber) {
   }
 
   errors.push(...validateLifecycle(row, label));
+  errors.push(...validateCompleteness(row, label));
   return errors;
 }
 
@@ -488,6 +622,59 @@ function validateLifecycle(row, label) {
     }
     if (source !== 'automated') {
       errors.push(`${label}: review_status='rejected' requires source='automated' (got ${JSON.stringify(source)}).`);
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * v2 completeness metadata: type/enum-check all three dimensions, and
+ * cross-check the two this module has enough information to fully verify
+ * against the row's own other data -- so a stale value left over from a
+ * prior edit (rather than recomputed) is always caught here, not silently
+ * trusted. Mirrors Python's _validate_completeness exactly. See
+ * "Schema evolution: v1 -> v2" above for why phase_annotation_status's
+ * complete/incomplete distinction (and the "not_applicable" case for both
+ * profile-dependent dimensions) cannot be fully re-derived here -- only enum
+ * membership is checked for those.
+ */
+function validateCompleteness(row, label) {
+  const errors = [];
+
+  const contactStatus = row.contact_annotation_status;
+  if (contactStatus && !VALID_CONTACT_ANNOTATION_STATUSES.includes(contactStatus)) {
+    errors.push(`${label}: contact_annotation_status ${JSON.stringify(contactStatus)} is not one of ${JSON.stringify([...VALID_CONTACT_ANNOTATION_STATUSES].sort())}.`);
+  } else if (contactStatus) {
+    const expected = defaultContactAnnotationStatus(row);
+    if (contactStatus !== expected) {
+      errors.push(
+        `${label}: contact_annotation_status=${JSON.stringify(contactStatus)} does not match reviewed_contact_frame `
+        + `(expected ${JSON.stringify(expected)} from reviewed_contact_frame=${JSON.stringify(row.reviewed_contact_frame)}); `
+        + 'this field must be regenerated from the shot\'s own data, never left stale after an edit.',
+      );
+    }
+  }
+
+  const phaseStatus = row.phase_annotation_status;
+  if (phaseStatus && !VALID_COMPLETENESS_STATUSES.includes(phaseStatus)) {
+    errors.push(`${label}: phase_annotation_status ${JSON.stringify(phaseStatus)} is not one of ${JSON.stringify([...VALID_COMPLETENESS_STATUSES].sort())}.`);
+  }
+
+  const coachingStatus = row.coaching_assessment_status;
+  if (coachingStatus && !VALID_COMPLETENESS_STATUSES.includes(coachingStatus)) {
+    errors.push(`${label}: coaching_assessment_status ${JSON.stringify(coachingStatus)} is not one of ${JSON.stringify([...VALID_COMPLETENESS_STATUSES].sort())}.`);
+  } else if (coachingStatus && coachingStatus !== COMPLETENESS_NOT_APPLICABLE) {
+    // not_applicable depends on profile resolution this module cannot
+    // perform -- only complete/incomplete's dependency on overall_quality_id
+    // is verified here.
+    const expected = row.overall_quality_id ? COMPLETENESS_COMPLETE : COMPLETENESS_INCOMPLETE;
+    if (coachingStatus !== expected) {
+      errors.push(
+        `${label}: coaching_assessment_status=${JSON.stringify(coachingStatus)} does not match overall_quality_id `
+        + `(expected ${JSON.stringify(expected)} from overall_quality_id=${JSON.stringify(row.overall_quality_id)}); `
+        + 'this field must be regenerated from the shot\'s own data, never left stale after an edit.',
+      );
     }
   }
 

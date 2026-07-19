@@ -36,6 +36,12 @@ button:disabled { cursor: not-allowed; opacity: 0.6; transform: none; box-shadow
 
 .topbar-identity h1 { margin: 0; font-size: 1.35rem; }
 
+/* Restrained, coach-readable build provenance (e.g. "v0.3.0 · build a1b2c3d")
+   -- small and muted next to the title, never competing with it, but plain
+   text (not a tooltip) so it's easy to read back or include in a
+   screenshot. See docs/tooling/annotation-workbench-development.md#build-metadata. */
+.build-provenance { font-size: 0.65rem; font-weight: 400; color: #9ca3af; vertical-align: middle; margin-left: 8px; }
+
 .video-banner {
   margin-top: 8px;
   display: flex;
@@ -114,7 +120,6 @@ video {
    of the app. */
 .btn-danger { background: transparent; border-color: #dc2626; color: #fca5a5; }
 .btn-danger:hover:not(:disabled) { background: rgba(220, 38, 38, 0.12); }
-.btn-compact { padding: 6px 12px; font-size: 0.85rem; }
 .btn-block { width: 100%; }
 
 .field { flex-direction: column; align-items: stretch; }
@@ -129,6 +134,7 @@ textarea, select, input { border-radius: 10px; border: 1px solid #4b5563; paddin
 /* ------------------------------------------------------- Resolved profile */
 
 .profile-name { font-weight: 600; margin: 0 0 8px; }
+.profile-warning { color: #f6c76b; font-weight: 600; margin: 0 0 8px; }
 .readiness-status { margin: 0 0 12px; font-size: 0.85rem; color: #9ca3af; }
 .readiness-status.progress-complete { color: #86efac; font-weight: 600; }
 
@@ -217,11 +223,10 @@ textarea, select, input { border-radius: 10px; border: 1px solid #4b5563; paddin
 .shot-detail-meta dt { color: #9ca3af; font-size: 0.85rem; margin: 0; }
 .shot-detail-meta dd { margin: 0; font-size: 0.85rem; text-align: right; word-break: break-word; }
 
-/* Done Editing, Delete Shot and Save Shot are the shot's lifecycle actions,
-   grouped together at the very bottom of Shot Detail. Each keeps its own
-   existing style (btn-secondary/btn-compact, btn-danger, btn-primary) --
-   colour/weight is the only difference, none stretches or gains a bespoke
-   variant. */
+/* Delete Shot and Save Shot are the shot's lifecycle actions, grouped
+   together at the very bottom of Shot Detail. Each keeps its own existing
+   style (btn-danger, btn-primary) -- colour/weight is the only difference,
+   neither stretches or gains a bespoke variant. */
 .shot-detail-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* ------------------------------------------------------- Phase summary

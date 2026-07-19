@@ -10,7 +10,7 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="topbar-identity">
-          <h1>Annotation Workbench</h1>
+          <h1>Annotation Workbench <span id="build-provenance" class="build-provenance"></span></h1>
           <div class="video-banner">
             <span id="video-name" class="profile-empty">No video loaded</span>
             <span id="video-frame-rate" class="profile-empty"></span>
@@ -122,10 +122,6 @@
                 <h4>Overall Assessment</h4>
                 <h5>Overall Quality</h5>
                 <div id="overall-quality-options" class="quality-options" role="radiogroup" aria-label="Overall quality"></div>
-                <label class="field">
-                  <span>Overall Notes</span>
-                  <textarea id="overall-notes" rows="3" placeholder="Notes about the shot as a whole"></textarea>
-                </label>
               </div>
 
               <h3>Shot Detail</h3>
@@ -143,10 +139,38 @@
                 <select id="shot-detail-shot-variant"></select>
               </label>
 
+              <!--
+                Hitter identity is a structured, coach-entered, stable human
+                annotation label (e.g. "player_1") -- independent of shot
+                classification/coaching-profile resolution, so it stays here
+                rather than inside the profile-gated Resolved Profile block
+                below. A datalist offers common labels as a small initial
+                affordance without limiting the stored value to only those
+                suggestions -- see docs/architecture/contact-point-annotation-csv.md.
+              -->
+              <label class="field">
+                <span>Hitter</span>
+                <input id="shot-detail-hitter" type="text" list="hitter-id-suggestions" placeholder="e.g. player_1 (blank = unknown)" />
+                <datalist id="hitter-id-suggestions">
+                  <option value="player_1"></option>
+                  <option value="player_2"></option>
+                  <option value="player_3"></option>
+                  <option value="player_4"></option>
+                </datalist>
+              </label>
+
+              <p id="shot-detail-completeness" class="readiness-status"></p>
+
+              <label class="field">
+                <span>General Notes</span>
+                <textarea id="overall-notes" rows="3" placeholder="Notes about the shot as a whole"></textarea>
+              </label>
+
               <h4>Resolved Profile</h4>
               <div id="shot-detail-profile-empty" class="phase-empty">No coaching profile configured for this shot's classification.</div>
               <div id="shot-detail-profile-body" hidden>
                 <p id="shot-detail-profile-name" class="profile-name"></p>
+                <p id="shot-detail-profile-warning" class="profile-warning" hidden></p>
                 <p id="shot-detail-readiness" class="readiness-status"></p>
               </div>
 
@@ -162,7 +186,6 @@
               </dl>
 
               <div class="shot-detail-actions">
-                <button id="done-editing" class="btn-secondary btn-compact">Done Editing</button>
                 <button id="shot-delete" class="btn-danger">Delete Shot</button>
                 <button id="save-shot" class="btn-primary" disabled>Save Shot</button>
               </div>
