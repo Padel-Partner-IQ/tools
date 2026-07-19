@@ -1543,15 +1543,19 @@ document.addEventListener('keydown', (event) => {
 
 /**
  * Concise, restrained build provenance next to the app title (e.g.
- * "v0.3.0 · build a1b2c3d"), read entirely from the generated
- * build_metadata.mjs -- never hardcoded or fabricated here. See
+ * "v0.3.0 · build a1b2c3d", or "v0.3.0 · development build a1b2c3d" for a
+ * genuinely modified local source tree), read entirely from the generated
+ * build_metadata.mjs -- never hardcoded or fabricated here. The raw word
+ * "dirty" is never shown to the coach; BUILD_METADATA.isDirty only changes
+ * the label word ("development build" vs "build"). See
  * docs/tooling/annotation-workbench-development.md#build-metadata for how
- * buildId is derived (CI run id, git SHA, `-dirty`, or the explicit
+ * buildId and isDirty are derived (CI run id, git SHA, or the explicit
  * 'development' fallback) and why the same module backs both this display
  * and automated inspection.
  */
 function renderBuildProvenance() {
-  buildProvenanceEl.textContent = `v${BUILD_METADATA.version} · build ${BUILD_METADATA.buildId}`;
+  const label = BUILD_METADATA.isDirty ? 'development build' : 'build';
+  buildProvenanceEl.textContent = `v${BUILD_METADATA.version} · ${label} ${BUILD_METADATA.buildId}`;
 }
 
 function init() {
