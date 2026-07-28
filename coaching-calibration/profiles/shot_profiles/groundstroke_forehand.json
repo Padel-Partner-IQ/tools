@@ -1,7 +1,7 @@
 {
   "schema_version": "2",
   "profile_id": "groundstroke_forehand",
-  "profile_version": "1.0.0",
+  "profile_version": "1.1.0",
   "profile_name": "Forehand Groundstroke",
   "description": "Calibration workflow for forehand groundstroke phase labelling, phase-level quality assessment, overall shot assessment, and structured coaching observations.",
   "classification": {
@@ -18,13 +18,15 @@
   "vocabulary": {
     "phases": {
       "id": "padel_partner_iq_calibration_phases",
-      "version": "1.0.0",
-      "file": "../phases.json"
+      "version": "1.1.0",
+      "file": "../../generated/forehand-observation-contract.json",
+      "section": "phases"
     },
     "observations": {
       "id": "padel_partner_iq_coaching_observations",
-      "version": "1.0.0",
-      "file": "../observations.json"
+      "version": "1.1.0",
+      "file": "../../generated/forehand-observation-contract.json",
+      "section": "metrics"
     },
     "ratings": {
       "id": "padel_partner_iq_rating_scale",
@@ -56,6 +58,7 @@
         "hip_rotation",
         "shoulder_hip_separation",
         "non_hitting_arm_extension",
+        "hitting_arm_structure",
         "elbow_position",
         "racket_side_preparation",
         "knee_bend",
@@ -73,6 +76,7 @@
         "shoulder_hip_separation",
         "hitting_arm_extension",
         "non_hitting_arm_extension",
+        "hitting_arm_structure",
         "elbow_position",
         "knee_bend",
         "contact_height",
@@ -89,7 +93,9 @@
       "observations": [
         "shoulder_turn",
         "hip_rotation",
+        "shoulder_hip_separation",
         "hitting_arm_extension",
+        "hitting_arm_structure",
         "elbow_position",
         "knee_bend",
         "body_balance",

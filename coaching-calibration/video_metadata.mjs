@@ -117,12 +117,26 @@ export function parseVideoMetadataFromFfprobeJson(rawJsonText) {
     return null;
   }
   const durationSec = Number.parseFloat(payload?.format?.duration ?? videoStream.duration);
+  const frameCount = Number.parseInt(videoStream.nb_frames, 10);
   return {
     frame_rate_fps: frameRateFps,
     width: Number.isFinite(videoStream.width) ? videoStream.width : null,
     height: Number.isFinite(videoStream.height) ? videoStream.height : null,
     duration_sec: Number.isFinite(durationSec) ? durationSec : null,
+    frame_count: Number.isInteger(frameCount) && frameCount > 0 ? frameCount : null,
   };
+}
+
+/** Convert playback time to the existing zero-based frame convention, clamped to the final decodable frame when a real frame count is known. */
+export function frameIndexForTime(timeSeconds, frameRateFps, frameCount = null) {
+  if (!Number.isFinite(timeSeconds) || !Number.isFinite(frameRateFps)) {
+    return null;
+  }
+  const calculated = Math.max(0, Math.round(timeSeconds * frameRateFps));
+  if (Number.isInteger(frameCount) && frameCount > 0) {
+    return Math.min(calculated, frameCount - 1);
+  }
+  return calculated;
 }
 
 /**
@@ -131,7 +145,7 @@ export function parseVideoMetadataFromFfprobeJson(rawJsonText) {
  * duration. `videoMetadataProvider` must be one of annotation_csv.mjs's
  * VALID_VIDEO_METADATA_PROVIDERS ('ffprobe' on desktop, 'mp4box' in browser).
  */
-export function deriveRealVideoMetadata({ filename, frameRateFps, videoMetadataProvider, width = null, height = null, durationSec = null }) {
+export function deriveRealVideoMetadata({ filename, frameRateFps, videoMetadataProvider, width = null, height = null, durationSec = null, frameCount = null }) {
   return {
     video_id: deriveVideoId(filename),
     video_filename: filename,
@@ -140,6 +154,7 @@ export function deriveRealVideoMetadata({ filename, frameRateFps, videoMetadataP
     width,
     height,
     duration_sec: durationSec,
+    frame_count: Number.isInteger(frameCount) && frameCount > 0 ? frameCount : null,
   };
 }
 

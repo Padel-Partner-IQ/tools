@@ -4,15 +4,14 @@
 // of the application rather than something coaches routinely modify. The UI is
 // rendered from these files; no coaching terminology is hard-coded.
 //
-// Ontology files:
-//   observations.json       -> { observations: { id: { label, description } } }
-//   phases.json             -> { items: { id: { label, description } } }
+// Phase and observation identifiers come from the generated build copy of the
+// repository-level forehand observation contract. Ratings remain independent
+// Workbench assessment vocabularies.
 //   ratings.json            -> { items: { id: { label, description } } }
 //   quality_assessments.json-> { items: { id: { label, description } } }
 
 const ONTOLOGY_FILES = {
-  observations: './profiles/observations.json',
-  phases: './profiles/phases.json',
+  contract: './generated/forehand-observation-contract.json',
   ratings: './profiles/ratings.json',
   qualityAssessments: './profiles/quality_assessments.json',
 };
@@ -76,17 +75,21 @@ export function deriveOntologyVersion(fileVersions) {
 }
 
 // Normalize the four raw ontology payloads into a single lookup structure.
-export function normalizeOntology({ observations, phases, ratings, qualityAssessments } = {}) {
+export function normalizeOntology({ contract, observations, phases, ratings, qualityAssessments } = {}) {
+  const contractPhases = contract && contract.phases;
+  const contractMetrics = contract && contract.metrics;
   const fileVersions = [
-    { file: 'observations', version: observations && observations.ontology_version },
-    { file: 'phases', version: phases && phases.phases_version },
+    { file: 'forehand_observation_contract', version: contract && contract.contract_version },
     { file: 'ratings', version: ratings && ratings.ratings_version },
     { file: 'quality_assessments', version: qualityAssessments && qualityAssessments.quality_assessments_version },
   ];
 
   return {
-    observations: extractItems(observations, 'observations'),
-    phases: extractItems(phases, 'items'),
+    observations: contractMetrics ? extractItems({ observations: contractMetrics }, 'observations') : extractItems(observations, 'observations'),
+    phases: contractPhases ? extractItems({ items: contractPhases }, 'items') : extractItems(phases, 'items'),
+    contractPhaseMetrics: contractPhases
+      ? Object.fromEntries(Object.entries(contractPhases).map(([id, definition]) => [id, [...(definition.metrics || [])]]))
+      : null,
     ratings: extractItems(ratings, 'items'),
     qualityAssessments: extractItems(qualityAssessments, 'items'),
     version: deriveOntologyVersion(fileVersions),
@@ -123,8 +126,7 @@ export function getOntologyVersion(ontology) {
 
 export function resolveOntologyFileUrls() {
   return {
-    observations: new URL(ONTOLOGY_FILES.observations, import.meta.url).toString(),
-    phases: new URL(ONTOLOGY_FILES.phases, import.meta.url).toString(),
+    contract: new URL(ONTOLOGY_FILES.contract, import.meta.url).toString(),
     ratings: new URL(ONTOLOGY_FILES.ratings, import.meta.url).toString(),
     qualityAssessments: new URL(ONTOLOGY_FILES.qualityAssessments, import.meta.url).toString(),
   };
@@ -141,11 +143,10 @@ async function loadJson(fetchOrLoadJson, resourceUrl) {
 // Load and normalize the ontology using the provided fetch implementation.
 export async function loadOntology(fetchImpl = fetch) {
   const urls = resolveOntologyFileUrls();
-  const [observations, phases, ratings, qualityAssessments] = await Promise.all([
-    loadJson(fetchImpl, urls.observations),
-    loadJson(fetchImpl, urls.phases),
+  const [contract, ratings, qualityAssessments] = await Promise.all([
+    loadJson(fetchImpl, urls.contract),
     loadJson(fetchImpl, urls.ratings),
     loadJson(fetchImpl, urls.qualityAssessments),
   ]);
-  return normalizeOntology({ observations, phases, ratings, qualityAssessments });
+  return normalizeOntology({ contract, ratings, qualityAssessments });
 }

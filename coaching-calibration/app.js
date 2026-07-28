@@ -36,6 +36,7 @@ import {
   deriveRealVideoMetadata,
   extractCsvVideoMetadata,
   formatFrameRateLabel,
+  frameIndexForTime,
   parseVideoMetadataFromFfprobeJson,
 } from './video_metadata.mjs';
 import { probeVideoMetadataInBrowser } from './video_probe_browser.mjs';
@@ -169,6 +170,7 @@ let realVideoMeta = null; // { video_id, video_filename, frame_rate_fps, video_m
 // visible separately in the video banner (updateVideoBanner) for diagnostics.
 let annotationFrameRateFps = null;
 let annotationFrameRateProvider = null;
+let annotationFrameCount = null; // decoded sample count for clamping the existing zero-based frame convention to 0...(N-1)
 let runMetadata = null; // AnnotationRunMetadata for newly created/edited rows this session
 let pendingCsvText = null; // raw CSV text opened before the video (or before its metadata was known)
 let csvLoaded = false; // whether an existing CSV backs this session, vs. a fresh Annotation Mode session
@@ -198,7 +200,7 @@ function updateFrameInfo() {
     currentFrame = null;
     return;
   }
-  currentFrame = Math.round(time * annotationFrameRateFps);
+  currentFrame = frameIndexForTime(time, annotationFrameRateFps, annotationFrameCount);
   frameNumberEl.textContent = currentFrame;
 }
 
@@ -228,6 +230,7 @@ function resetSessionForNewVideo() {
   realVideoMeta = null;
   annotationFrameRateFps = null;
   annotationFrameRateProvider = null;
+  annotationFrameCount = null;
   runMetadata = null;
   pendingCsvText = null;
   csvLoaded = false;
@@ -296,6 +299,7 @@ async function loadVideoFromFile(file) {
       width: probed.width,
       height: probed.height,
       durationSec: probed.duration_sec,
+      frameCount: probed.frame_count,
     }));
   });
 }
@@ -321,6 +325,7 @@ async function loadVideoFromPath(path, filename) {
       width: probed.width,
       height: probed.height,
       durationSec: probed.duration_sec,
+      frameCount: probed.frame_count,
     }));
   });
 }
@@ -395,6 +400,7 @@ function applyRealVideoMetadata(meta) {
   realVideoMeta = meta;
   annotationFrameRateFps = meta.frame_rate_fps;
   annotationFrameRateProvider = meta.video_metadata_provider;
+  annotationFrameCount = meta.frame_count;
   ensureRunMetadata();
   setControlsEnabled(true);
   reconcilePendingCsv();

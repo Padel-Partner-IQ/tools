@@ -81,6 +81,7 @@ function metadataFromMp4BoxInfo(info) {
     width: Number.isFinite(videoTrack.video?.width) ? videoTrack.video.width : null,
     height: Number.isFinite(videoTrack.video?.height) ? videoTrack.video.height : null,
     duration_sec: durationSec,
+    frame_count: videoTrack.nb_samples,
   };
 }
 

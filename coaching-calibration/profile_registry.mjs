@@ -179,6 +179,12 @@ export function validateLoadedProfile({ profileRaw, registryEntry, taxonomy = nu
         errors.push(`Profile "${registryEntry.profileId}" references unknown quality id "${qualityId}".`);
       }
     }
+    if (profile.profile_id === 'groundstroke_forehand' && ontology.contractPhaseMetrics) {
+      const profilePhaseMetrics = Object.fromEntries(profile.phases.map((phase) => [phase.id, phase.observations]));
+      if (JSON.stringify(profilePhaseMetrics) !== JSON.stringify(ontology.contractPhaseMetrics)) {
+        errors.push('Profile "groundstroke_forehand" phase observations differ from the shared forehand observation contract.');
+      }
+    }
   }
 
   if (errors.length > 0) {
