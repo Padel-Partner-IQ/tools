@@ -12,8 +12,11 @@
 
 const ONTOLOGY_FILES = {
   contract: './generated/forehand-observation-contract.json',
+  observations: './profiles/observations.json',
+  phases: './profiles/phases.json',
   ratings: './profiles/ratings.json',
   qualityAssessments: './profiles/quality_assessments.json',
+  diagnosticScales: './profiles/diagnostic_scales.json',
 };
 
 function prettifyId(id) {
@@ -45,6 +48,7 @@ function extractItems(raw, key) {
     result[id] = {
       label: typeof value.label === 'string' && value.label.trim() ? value.label.trim() : prettifyId(id),
       description: typeof value.description === 'string' ? value.description.trim() : '',
+      diagnosticScaleId: typeof value.diagnostic_scale_id === 'string' ? value.diagnostic_scale_id.trim() : '',
     };
   }
   return result;
@@ -75,23 +79,48 @@ export function deriveOntologyVersion(fileVersions) {
 }
 
 // Normalize the four raw ontology payloads into a single lookup structure.
-export function normalizeOntology({ contract, observations, phases, ratings, qualityAssessments } = {}) {
+export function normalizeOntology({ contract, observations, phases, ratings, qualityAssessments, diagnosticScales } = {}) {
   const contractPhases = contract && contract.phases;
   const contractMetrics = contract && contract.metrics;
   const fileVersions = [
     { file: 'forehand_observation_contract', version: contract && contract.contract_version },
     { file: 'ratings', version: ratings && ratings.ratings_version },
     { file: 'quality_assessments', version: qualityAssessments && qualityAssessments.quality_assessments_version },
+    { file: 'diagnostic_scales', version: diagnosticScales && diagnosticScales.diagnostic_scales_version },
   ];
 
+  const groups = {};
+  for (const [id, value] of Object.entries(contract?.groups || {})) {
+    groups[id] = { label: typeof value?.label === 'string' ? value.label : prettifyId(id) };
+  }
+  const normalizedScales = {};
+  for (const [scaleId, scale] of Object.entries(diagnosticScales?.scales || {})) {
+    normalizedScales[scaleId] = Array.isArray(scale?.items)
+      ? scale.items
+        .filter((item) => item && typeof item.id === 'string' && typeof item.label === 'string')
+        .map((item) => ({ id: item.id, label: item.label, qualityId: typeof item.quality_id === 'string' ? item.quality_id : '' }))
+      : [];
+  }
+
   return {
-    observations: contractMetrics ? extractItems({ observations: contractMetrics }, 'observations') : extractItems(observations, 'observations'),
-    phases: contractPhases ? extractItems({ items: contractPhases }, 'items') : extractItems(phases, 'items'),
+    observations: {
+      ...extractItems(observations, 'observations'),
+      ...(contractMetrics ? extractItems({ observations: contractMetrics }, 'observations') : {}),
+    },
+    phases: {
+      ...extractItems(phases, 'items'),
+      ...(contractPhases ? extractItems({ items: contractPhases }, 'items') : {}),
+    },
     contractPhaseMetrics: contractPhases
       ? Object.fromEntries(Object.entries(contractPhases).map(([id, definition]) => [id, [...(definition.metrics || [])]]))
       : null,
+    contractPhaseGroups: contractPhases
+      ? Object.fromEntries(Object.entries(contractPhases).map(([id, definition]) => [id, (definition.observation_groups || []).map((group) => ({ id: group.id, observations: [...(group.metrics || [])] }))]))
+      : null,
     ratings: extractItems(ratings, 'items'),
     qualityAssessments: extractItems(qualityAssessments, 'items'),
+    groups,
+    diagnosticScales: normalizedScales,
     version: deriveOntologyVersion(fileVersions),
     fileVersions,
   };
@@ -127,8 +156,11 @@ export function getOntologyVersion(ontology) {
 export function resolveOntologyFileUrls() {
   return {
     contract: new URL(ONTOLOGY_FILES.contract, import.meta.url).toString(),
+    observations: new URL(ONTOLOGY_FILES.observations, import.meta.url).toString(),
+    phases: new URL(ONTOLOGY_FILES.phases, import.meta.url).toString(),
     ratings: new URL(ONTOLOGY_FILES.ratings, import.meta.url).toString(),
     qualityAssessments: new URL(ONTOLOGY_FILES.qualityAssessments, import.meta.url).toString(),
+    diagnosticScales: new URL(ONTOLOGY_FILES.diagnosticScales, import.meta.url).toString(),
   };
 }
 
@@ -143,10 +175,13 @@ async function loadJson(fetchOrLoadJson, resourceUrl) {
 // Load and normalize the ontology using the provided fetch implementation.
 export async function loadOntology(fetchImpl = fetch) {
   const urls = resolveOntologyFileUrls();
-  const [contract, ratings, qualityAssessments] = await Promise.all([
+  const [contract, observations, phases, ratings, qualityAssessments, diagnosticScales] = await Promise.all([
     loadJson(fetchImpl, urls.contract),
+    loadJson(fetchImpl, urls.observations),
+    loadJson(fetchImpl, urls.phases),
     loadJson(fetchImpl, urls.ratings),
     loadJson(fetchImpl, urls.qualityAssessments),
+    loadJson(fetchImpl, urls.diagnosticScales),
   ]);
-  return normalizeOntology({ contract, ratings, qualityAssessments });
+  return normalizeOntology({ contract, observations, phases, ratings, qualityAssessments, diagnosticScales });
 }

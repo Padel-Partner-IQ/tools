@@ -1,7 +1,7 @@
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "profile_id": "groundstroke_backhand",
-  "profile_version": "1.1.0",
+  "profile_version": "2.0.0",
   "profile_name": "Backhand Groundstroke",
   "description": "Calibration workflow for backhand groundstroke phase labelling, phase-level quality assessment, overall shot assessment, and structured coaching observations.",
   "classification": {
@@ -35,95 +35,140 @@
       "id": "padel_partner_iq_quality_assessment_scale",
       "version": "1.0.0",
       "file": "../quality_assessments.json"
+    },
+    "diagnostic_scales": {
+      "id": "padel_partner_iq_forehand_diagnostic_scales",
+      "version": "1.0.0",
+      "file": "../diagnostic_scales.json"
     }
   },
   "phases": [
     {
       "id": "ready_position",
       "shortcut": "1",
-      "observations": [
-        "stance_width",
-        "knee_bend",
-        "body_balance"
+      "observation_groups": [
+        {
+          "id": "stance",
+          "observations": [
+            "stance_width",
+            "knee_bend",
+            "body_balance"
+          ]
+        }
       ]
     },
     {
       "id": "max_take_back",
       "shortcut": "2",
-      "observations": [
-        "shoulder_turn",
-        "hip_rotation",
-        "shoulder_hip_separation",
-        "hitting_arm_structure",
-        "non_hitting_arm_support",
-        "elbow_position",
-        "knee_bend",
-        "body_balance",
-        "shoulder_vertical_alignment",
-        "stance_width"
+      "observation_groups": [
+        {
+          "id": "core_stance",
+          "observations": [
+            "shoulder_turn",
+            "hip_rotation",
+            "shoulder_hip_separation",
+            "knee_bend",
+            "body_balance",
+            "shoulder_vertical_alignment",
+            "stance_width"
+          ]
+        },
+        {
+          "id": "non_hitting_arm",
+          "observations": [
+            "non_hitting_arm_support"
+          ]
+        },
+        {
+          "id": "hitting_arm",
+          "observations": [
+            "hitting_arm_structure",
+            "elbow_position"
+          ]
+        }
       ]
     },
     {
       "id": "contact_point",
       "shortcut": "3",
-      "observations": [
-        "shoulder_turn",
-        "hip_rotation",
-        "shoulder_hip_separation",
-        "hitting_arm_structure",
-        "non_hitting_arm_support",
-        "elbow_position",
-        "knee_bend",
-        "contact_height",
-        "contact_distance",
-        "body_balance",
-        "shoulder_vertical_alignment",
-        "stance_width",
-        "weight_transfer"
+      "observation_groups": [
+        {
+          "id": "core_stance",
+          "observations": [
+            "shoulder_turn",
+            "hip_rotation",
+            "shoulder_hip_separation",
+            "knee_bend",
+            "body_balance",
+            "shoulder_vertical_alignment",
+            "stance_width",
+            "weight_transfer"
+          ]
+        },
+        {
+          "id": "non_hitting_arm",
+          "observations": [
+            "non_hitting_arm_support"
+          ]
+        },
+        {
+          "id": "hitting_arm",
+          "observations": [
+            "hitting_arm_structure",
+            "elbow_position"
+          ]
+        },
+        {
+          "id": "contact_positioning",
+          "observations": [
+            "contact_height",
+            "contact_distance"
+          ]
+        }
       ]
     },
     {
       "id": "max_follow_through",
       "shortcut": "4",
-      "observations": [
-        "shoulder_turn",
-        "hip_rotation",
-        "shoulder_hip_separation",
-        "hitting_arm_structure",
-        "non_hitting_arm_support",
-        "elbow_position",
-        "knee_bend",
-        "body_balance",
-        "stance_width",
-        "weight_transfer",
-        "follow_through_shape"
-      ]
-    },
-    {
-      "id": "recovery_position",
-      "shortcut": "5",
-      "observations": [
-        "knee_bend",
-        "body_balance",
-        "stance_width"
+      "observation_groups": [
+        {
+          "id": "core_stance",
+          "observations": [
+            "shoulder_turn",
+            "hip_rotation",
+            "shoulder_hip_separation",
+            "knee_bend",
+            "body_balance",
+            "stance_width",
+            "weight_transfer"
+          ]
+        },
+        {
+          "id": "non_hitting_arm",
+          "observations": [
+            "non_hitting_arm_support"
+          ]
+        },
+        {
+          "id": "hitting_arm",
+          "observations": [
+            "hitting_arm_structure",
+            "elbow_position",
+            "follow_through_shape"
+          ]
+        }
       ]
     }
   ],
   "ratings": [
-    "not_assessed",
-    "too_little",
-    "good",
-    "excellent",
-    "too_much",
-    "unclear"
+    "not_assessed"
   ],
   "quality_ratings": [
     "not_assessed",
     "excellent",
     "good",
     "needs_work",
-    "red_flag",
-    "unclear"
+    "red_flag"
   ],
   "capture": {
     "requires_overall_quality": false,

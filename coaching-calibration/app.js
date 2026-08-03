@@ -40,7 +40,7 @@ import {
   parseVideoMetadataFromFfprobeJson,
 } from './video_metadata.mjs';
 import { probeVideoMetadataInBrowser } from './video_probe_browser.mjs';
-import { buildPhaseViewModels, buildRatingOptions, buildQualityOptions } from './profile_state.mjs';
+import { buildPhaseViewModels, buildQualityOptions, getDiagnosticOptions } from './profile_state.mjs';
 import { resolveProfileForShot } from './profile_resolution.mjs';
 import { loadOntology, getQualityMeta } from './ontology.mjs';
 import {
@@ -58,6 +58,13 @@ import {
 import { loadRegistry, loadRegisteredProfiles, ProfileRegistryValidationError } from './profile_registry.mjs';
 import { getPhaseFrame } from './phase_frame_mapping.mjs';
 import { getPhaseAssessment, capturePhaseFrame, clearPhase, isPhaseCaptured } from './phase_assessment.mjs';
+import {
+  ASSESSMENT_SOURCES,
+  applyOverallQualityDefault,
+  applyPhaseQualityDefault,
+  observationsLocked,
+  setObservationDiagnosis,
+} from './assessment_defaults.mjs';
 import { findPhaseFrameOwner, buildFrameInUseErrorMessage } from './duplicate_frame.mjs';
 import { computeShotReadiness } from './shot_readiness.mjs';
 import { computeAnnotationCompleteness, describeAnnotationCompleteness } from './annotation_completeness.mjs';
@@ -140,6 +147,7 @@ const phaseCardEl = document.getElementById('phase-card');
 const phaseCardTitleEl = document.getElementById('phase-card-title');
 const phaseCardDescriptionEl = document.getElementById('phase-card-description');
 const phaseObservationsListEl = document.getElementById('phase-observations-list');
+const phaseObservationsInheritedEl = document.getElementById('phase-observations-inherited');
 const phaseQualityOptionsEl = document.getElementById('phase-quality-options');
 const phaseNotesEl = document.getElementById('phase-notes');
 const phaseCaptureButton = document.getElementById('phase-capture');
@@ -1001,13 +1009,19 @@ function renderPhaseCard(shot, phases, profile) {
   const working = phaseWorking[phase.id] || getPhaseAssessment(shot, phase.id);
   phaseWorking[phase.id] = working;
 
-  renderPhaseObservations(phase, working, profile);
+  renderPhaseObservations(phase, working, shot);
 
   const qualityOptions = buildQualityOptions(profile, ontology);
   renderQualityGroup(phaseQualityOptionsEl, qualityOptions, working.qualityId, (qualityId) => {
-    working.qualityId = working.qualityId === qualityId ? '' : qualityId;
+    const nextQualityId = working.qualityId === qualityId ? '' : qualityId;
+    phaseWorking[phase.id] = applyPhaseQualityDefault(
+      working,
+      phase,
+      nextQualityId,
+      nextQualityId ? ASSESSMENT_SOURCES.COACH_SELECTED : '',
+    );
     renderPhaseCard(shot, phases, profile);
-  });
+  }, ['excellent', 'not_assessed'].includes(shot.overall_quality_id));
 
   phaseNotesEl.value = working.notes;
 
@@ -1015,10 +1029,27 @@ function renderPhaseCard(shot, phases, profile) {
   phaseClearButton.disabled = !controlsEnabled || !phaseHasAnyData(shot, phase.id);
 }
 
-function renderPhaseObservations(phase, working, profile) {
+function renderPhaseObservations(phase, working, shot) {
   phaseObservationsListEl.innerHTML = '';
-  const ratingOptions = buildRatingOptions(profile, ontology);
-  for (const observation of phase.observations) {
+  const groups = phase.observationGroups?.length > 0
+    ? phase.observationGroups
+    : [{ id: '', label: '', observations: phase.observations }];
+  const locked = observationsLocked(shot.overall_quality_id, working);
+  phaseObservationsListEl.hidden = locked;
+  phaseObservationsInheritedEl.hidden = !locked;
+  if (locked) {
+    const qualityLabel = getQualityMeta(ontology, working.qualityId || shot.overall_quality_id).label;
+    phaseObservationsInheritedEl.textContent = `${qualityLabel} inherited for every observation. Change the overall or phase quality to review exceptions.`;
+  }
+
+  for (const group of groups) {
+    if (group.label) {
+      const heading = document.createElement('li');
+      heading.className = 'observation-group-heading';
+      heading.textContent = group.label;
+      phaseObservationsListEl.appendChild(heading);
+    }
+    for (const observation of group.observations) {
     const li = document.createElement('li');
     li.className = 'observation-row';
     const label = document.createElement('span');
@@ -1027,39 +1058,50 @@ function renderPhaseObservations(phase, working, profile) {
     li.appendChild(label);
 
     const select = document.createElement('select');
-    select.disabled = !controlsEnabled;
+    select.disabled = !controlsEnabled || locked;
+    const current = working.observations[observation.id] || { qualityId: '', diagnosisId: '', source: '', legacyRatingId: '' };
     const notAssessedOption = document.createElement('option');
-    notAssessedOption.value = 'not_assessed';
-    notAssessedOption.textContent = 'Not assessed';
+    notAssessedOption.value = '__not_assessed__';
+    notAssessedOption.textContent = 'Not Assessed';
     select.appendChild(notAssessedOption);
-    for (const rating of ratingOptions) {
+
+    if (current.legacyRatingId) {
+      const legacyOption = document.createElement('option');
+      legacyOption.value = '__legacy__';
+      legacyOption.textContent = `Legacy: ${current.legacyRatingId.replaceAll('_', ' ')}`;
+      select.appendChild(legacyOption);
+    }
+
+    const diagnosticOptions = getDiagnosticOptions(ontology, observation.diagnosticScaleId);
+    for (const diagnosis of diagnosticOptions) {
       const option = document.createElement('option');
-      option.value = rating.id;
-      option.textContent = rating.label;
+      option.value = diagnosis.id;
+      option.textContent = diagnosis.label;
       select.appendChild(option);
     }
-    select.value = working.observations[observation.id] || 'not_assessed';
+    const qualityMappedDiagnosis = diagnosticOptions.find((candidate) => candidate.qualityId === current.qualityId)?.id || '';
+    select.value = current.diagnosisId || (current.legacyRatingId ? '__legacy__' : qualityMappedDiagnosis || '__not_assessed__');
     select.addEventListener('change', () => {
-      if (select.value === 'not_assessed') {
-        delete working.observations[observation.id];
-      } else {
-        working.observations[observation.id] = select.value;
-      }
+      if (select.value === '__legacy__') return;
+      const diagnosis = diagnosticOptions.find((candidate) => candidate.id === select.value) || null;
+      phaseWorking[phase.id] = setObservationDiagnosis(working, observation.id, diagnosis);
+      renderPhaseObservations(phase, phaseWorking[phase.id], shot);
     });
     li.appendChild(select);
     phaseObservationsListEl.appendChild(li);
+    }
   }
 }
 
 /** Renders a toggle-button group (Phase Quality or Overall Quality): re-clicking the selected option deselects it. */
-function renderQualityGroup(container, options, selectedId, onSelect) {
+function renderQualityGroup(container, options, selectedId, onSelect, disabled = false) {
   container.innerHTML = '';
   for (const option of options) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `quality-option${option.id === selectedId ? ' selected' : ''}`;
     button.textContent = option.label;
-    button.disabled = !controlsEnabled;
+    button.disabled = !controlsEnabled || disabled;
     button.addEventListener('click', () => onSelect(option.id));
     container.appendChild(button);
   }
@@ -1070,7 +1112,12 @@ function renderOverallAssessment(shot, profile) {
   const qualityOptions = buildQualityOptions(profile, ontology);
   renderQualityGroup(overallQualityOptionsEl, qualityOptions, shot.overall_quality_id, (qualityId) => {
     const nextValue = shot.overall_quality_id === qualityId ? '' : qualityId;
-    mutateSelectedShot((candidate) => ({ ...candidate, overall_quality_id: nextValue }));
+    const { phases } = resolveActiveProfileAndPhases(shot);
+    mutateSelectedShot((candidate) => {
+      const updated = applyOverallQualityDefault(candidate, phases, nextValue);
+      phaseWorking = Object.fromEntries(phases.map((phase) => [phase.id, getPhaseAssessment(updated, phase.id)]));
+      return updated;
+    });
   });
 }
 
@@ -1097,6 +1144,7 @@ function handleCapturePhase() {
         phaseId,
         frame: currentFrame,
         qualityId: working.qualityId,
+        qualitySource: working.qualitySource,
         notes: working.notes,
         observations: working.observations,
       }),
@@ -1121,7 +1169,7 @@ function handleClearPhase() {
   const phaseId = activePhaseId;
   const { phases } = resolveActiveProfileAndPhases(shot);
   const phaseLabel = phases.find((candidate) => candidate.id === phaseId)?.label || phaseId;
-  phaseWorking[phaseId] = { qualityId: '', notes: '', observations: {} };
+  phaseWorking[phaseId] = { qualityId: '', qualitySource: '', notes: '', observations: {} };
   try {
     mutateSelectedShot((candidate) => clearPhase(candidate, phaseId));
   } catch (error) {
@@ -1549,7 +1597,7 @@ document.addEventListener('keydown', (event) => {
 
 /**
  * Concise, restrained build provenance next to the app title (e.g.
- * "v0.3.0 · build a1b2c3d", or "v0.3.0 · development build a1b2c3d" for a
+ * "v0.4.0 · build a1b2c3d", or "v0.4.0 · development build" for a
  * genuinely modified local source tree), read entirely from the generated
  * build_metadata.mjs -- never hardcoded or fabricated here. The raw word
  * "dirty" is never shown to the coach; BUILD_METADATA.isDirty only changes
@@ -1560,8 +1608,9 @@ document.addEventListener('keydown', (event) => {
  * and automated inspection.
  */
 function renderBuildProvenance() {
-  const label = BUILD_METADATA.isDirty ? 'development build' : 'build';
-  buildProvenanceEl.textContent = `v${BUILD_METADATA.version} · ${label} ${BUILD_METADATA.buildId}`;
+  buildProvenanceEl.textContent = BUILD_METADATA.isDirty
+    ? `v${BUILD_METADATA.version} · development build`
+    : `v${BUILD_METADATA.version} · build ${BUILD_METADATA.buildId}`;
 }
 
 function init() {

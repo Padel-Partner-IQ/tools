@@ -1,7 +1,8 @@
 // Per-phase quality/notes/observation-rating storage for the Annotation
 // Workbench's phase editor, backed by the canonical CSV's `phase_assessments`
-// column (JSON text, keyed by phase id, uniform for all five phases
-// including contact_point). See
+// column (JSON text, keyed by phase id, uniform for every configured phase,
+// including contact_point). Historical entries for phases no longer active in
+// a profile remain readable and are never removed implicitly. See
 // docs/architecture/contact-point-annotation-csv.md's "Deliberately not in
 // v1" section for why this column exists and what it deliberately does not
 // store (frames stay in their own dedicated columns; see phase_frame_mapping.mjs).
@@ -41,7 +42,39 @@ export function parsePhaseAssessments(shot) {
   return decoded;
 }
 
-const EMPTY_ASSESSMENT = Object.freeze({ qualityId: '', notes: '', observations: {} });
+const EMPTY_ASSESSMENT = Object.freeze({ qualityId: '', qualitySource: '', notes: '', observations: {} });
+
+export function normalizeObservationAssessment(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return {
+      qualityId: typeof value.quality_id === 'string' ? value.quality_id : typeof value.qualityId === 'string' ? value.qualityId : '',
+      diagnosisId: typeof value.diagnosis_id === 'string' ? value.diagnosis_id : typeof value.diagnosisId === 'string' ? value.diagnosisId : '',
+      source: typeof value.source === 'string' ? value.source : '',
+      legacyRatingId: typeof value.legacy_rating_id === 'string' ? value.legacy_rating_id : typeof value.legacyRatingId === 'string' ? value.legacyRatingId : '',
+    };
+  }
+  if (typeof value === 'string' && value) {
+    const qualityId = ['good', 'excellent', 'not_assessed'].includes(value) ? value : '';
+    return {
+      qualityId,
+      diagnosisId: '',
+      source: 'migrated',
+      legacyRatingId: qualityId ? '' : value,
+    };
+  }
+  return { qualityId: '', diagnosisId: '', source: '', legacyRatingId: '' };
+}
+
+function serializeObservationAssessment(value) {
+  const normalized = normalizeObservationAssessment(value);
+  const serialized = {
+    quality_id: normalized.qualityId,
+    diagnosis_id: normalized.diagnosisId,
+    source: normalized.source,
+  };
+  if (normalized.legacyRatingId) serialized.legacy_rating_id = normalized.legacyRatingId;
+  return serialized;
+}
 
 /** The stored assessment for `phaseId`, or empty defaults if not yet captured. */
 export function getPhaseAssessment(shot, phaseId) {
@@ -52,17 +85,25 @@ export function getPhaseAssessment(shot, phaseId) {
   }
   return {
     qualityId: typeof entry.quality_id === 'string' ? entry.quality_id : '',
+    qualitySource: typeof entry.quality_source === 'string' ? entry.quality_source : '',
     notes: typeof entry.notes === 'string' ? entry.notes : '',
-    observations: entry.observations && typeof entry.observations === 'object' ? { ...entry.observations } : {},
+    observations: entry.observations && typeof entry.observations === 'object'
+      ? Object.fromEntries(Object.entries(entry.observations).map(([id, value]) => [id, normalizeObservationAssessment(value)]))
+      : {},
   };
 }
 
 /** Pure: returns a new shot with `phaseId`'s assessment set. Throws InvalidPhaseAssessmentsError if existing data is corrupt. */
-export function setPhaseAssessment(shot, phaseId, { qualityId = '', notes = '', observations = {} } = {}) {
+export function setPhaseAssessment(shot, phaseId, { qualityId = '', qualitySource = '', notes = '', observations = {} } = {}) {
   const all = parsePhaseAssessments(shot);
   const next = {
     ...all,
-    [phaseId]: { quality_id: qualityId, notes, observations: { ...observations } },
+    [phaseId]: {
+      quality_id: qualityId,
+      quality_source: qualitySource,
+      notes,
+      observations: Object.fromEntries(Object.entries(observations).map(([id, value]) => [id, serializeObservationAssessment(value)])),
+    },
   };
   return { ...shot, phase_assessments: JSON.stringify(next) };
 }
@@ -84,9 +125,9 @@ export function clearPhaseAssessment(shot, phaseId) {
  * and the assessment (setPhaseAssessment) in one pure step. Propagates
  * InvalidPhaseAssessmentsError rather than masking it.
  */
-export function capturePhaseFrame(shot, { phaseId, frame, qualityId, notes, observations }) {
+export function capturePhaseFrame(shot, { phaseId, frame, qualityId, qualitySource, notes, observations }) {
   const withFrame = setPhaseFrame(shot, phaseId, frame);
-  return setPhaseAssessment(withFrame, phaseId, { qualityId, notes, observations });
+  return setPhaseAssessment(withFrame, phaseId, { qualityId, qualitySource, notes, observations });
 }
 
 /**

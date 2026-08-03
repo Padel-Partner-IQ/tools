@@ -1,61 +1,101 @@
 {
   "schema_version": "1",
   "contract_id": "padel_partner_iq_forehand_observations",
-  "contract_version": "1.1.0",
+  "contract_version": "2.0.0",
   "source": {
     "system": "annotation_workbench",
     "profile_id": "groundstroke_forehand",
-    "profile_version": "1.1.0",
-    "derivation": "The shared Workbench/backend contract extends version 1.0.0 with reviewed positive-pose phase assignments while preserving all existing identifiers and meanings."
+    "profile_version": "2.0.0",
+    "derivation": "The signed-off Workbench rubric v1.4 simplifies the active forehand workflow to four phases, introduces observation groups and observation-specific diagnostic scales, and preserves historical identifiers where their coaching meaning remains stable."
+  },
+  "principles": {
+    "groups_are_presentational": true,
+    "phase_and_observation_form_assessment_address": true,
+    "engine_evidence_does_not_classify_quality": true
+  },
+  "groups": {
+    "stance": {"label": "Stance"},
+    "arm_racket_readiness": {"label": "Arm / racket readiness"},
+    "core_stance": {"label": "Core stance"},
+    "non_hitting_arm": {"label": "Non-hitting arm"},
+    "hitting_arm": {"label": "Hitting arm"},
+    "contact_positioning": {"label": "Contact positioning"}
   },
   "phases": {
     "ready_position": {
       "label": "Ready Position",
       "description": "Assess the player's ready position immediately before initiating movement towards the shot.",
-      "metrics": ["stance_width", "knee_bend", "body_balance", "racket_side_preparation"]
+      "metrics": ["stance_width", "knee_bend", "body_balance", "racket_side_preparation", "racket_preparation_height"],
+      "observation_groups": [
+        {"id": "stance", "metrics": ["stance_width", "knee_bend", "body_balance"]},
+        {"id": "arm_racket_readiness", "metrics": ["racket_side_preparation", "racket_preparation_height"]}
+      ]
     },
     "max_take_back": {
       "label": "Max Take Back",
       "description": "Assess the moment of maximum preparation immediately before the forward swing begins.",
-      "metrics": ["shoulder_turn", "hip_rotation", "shoulder_hip_separation", "non_hitting_arm_extension", "hitting_arm_structure", "elbow_position", "racket_side_preparation", "knee_bend", "body_balance", "shoulder_vertical_alignment", "stance_width"]
+      "metrics": ["court_body_orientation", "shoulder_hip_separation", "body_balance", "non_hitting_arm_extension", "non_hitting_arm_orientation", "hitting_arm_structure", "hitting_arm_orientation"],
+      "observation_groups": [
+        {"id": "core_stance", "metrics": ["court_body_orientation", "shoulder_hip_separation", "body_balance"]},
+        {"id": "non_hitting_arm", "metrics": ["non_hitting_arm_extension", "non_hitting_arm_orientation"]},
+        {"id": "hitting_arm", "metrics": ["hitting_arm_structure", "hitting_arm_orientation"]}
+      ]
     },
     "contact_point": {
       "label": "Contact Point",
       "description": "Assess the instant the player makes contact with the ball, or the best estimate where contact occurs.",
-      "metrics": ["shoulder_turn", "hip_rotation", "shoulder_hip_separation", "hitting_arm_extension", "non_hitting_arm_extension", "hitting_arm_structure", "elbow_position", "knee_bend", "contact_height", "contact_distance", "body_balance", "shoulder_vertical_alignment", "stance_width", "weight_transfer"]
+      "metrics": ["court_body_orientation", "shoulder_hip_separation", "body_balance", "non_hitting_arm_extension", "non_hitting_arm_orientation", "elbow_position", "hitting_arm_extension", "contact_height", "contact_distance", "contact_fore_aft_position"],
+      "observation_groups": [
+        {"id": "core_stance", "metrics": ["court_body_orientation", "shoulder_hip_separation", "body_balance"]},
+        {"id": "non_hitting_arm", "metrics": ["non_hitting_arm_extension", "non_hitting_arm_orientation"]},
+        {"id": "hitting_arm", "metrics": ["elbow_position", "hitting_arm_extension"]},
+        {"id": "contact_positioning", "metrics": ["contact_height", "contact_distance", "contact_fore_aft_position"]}
+      ]
     },
     "max_follow_through": {
       "label": "Max Follow Through",
       "description": "Assess the point at which the follow-through reaches its maximum extent before recovery begins.",
-      "metrics": ["shoulder_turn", "hip_rotation", "shoulder_hip_separation", "hitting_arm_extension", "hitting_arm_structure", "elbow_position", "knee_bend", "body_balance", "stance_width", "weight_transfer", "follow_through_shape"]
-    },
-    "recovery_position": {
-      "label": "Recovery Position",
-      "description": "Assess the player's return towards a balanced ready position after completing the shot.",
-      "metrics": ["knee_bend", "body_balance", "stance_width"]
+      "metrics": ["court_body_orientation", "shoulder_hip_separation", "body_balance", "non_hitting_arm_extension", "non_hitting_arm_orientation", "elbow_position", "hitting_arm_extension", "follow_through_height"],
+      "observation_groups": [
+        {"id": "core_stance", "metrics": ["court_body_orientation", "shoulder_hip_separation", "body_balance"]},
+        {"id": "non_hitting_arm", "metrics": ["non_hitting_arm_extension", "non_hitting_arm_orientation"]},
+        {"id": "hitting_arm", "metrics": ["elbow_position", "hitting_arm_extension", "follow_through_height"]}
+      ]
     }
   },
   "metrics": {
-    "shoulder_turn": {"label": "Shoulder Turn", "description": "Assess whether the player has rotated the shoulders appropriately for the selected phase."},
-    "hip_rotation": {"label": "Hip Rotation", "description": "Assess whether the hips rotate appropriately into and through the selected phase."},
-    "shoulder_hip_separation": {"label": "Shoulder / Hip Separation", "description": "Assess whether the relationship between shoulder rotation and hip rotation looks appropriate for the selected phase."},
-    "hitting_arm_extension": {"label": "Hitting Arm Extension", "description": "Assess the extension and reach of the hitting arm for the selected phase."},
-    "non_hitting_arm_extension": {"label": "Non-hitting Arm Extension", "description": "Assess whether the non-hitting arm is extended or positioned appropriately for the selected phase."},
-    "hitting_arm_structure": {"label": "Hitting Arm Structure", "description": "Assess whether the hitting arm shape is appropriate for the selected phase, including whether it looks compact, controlled and well organised."},
-    "non_hitting_arm_support": {"label": "Non-hitting Arm Support", "description": "Assess whether the non-hitting arm supports the stroke effectively through positioning, balance or preparation."},
-    "elbow_position": {"label": "Elbow Position", "description": "Assess whether the elbow position is appropriate for the selected phase, including whether it appears too tucked, too extended, too high or too far from the body."},
-    "knee_bend": {"label": "Knee Bend", "description": "Assess whether the player has an appropriate athletic base and knee flexion for the selected phase."},
-    "racket_side_preparation": {"label": "Arm / Racket-Side Preparation", "description": "Assess whether the hitting side is prepared appropriately for the selected phase. This is judged from visible arm and body positioning rather than racket-face detail."},
-    "contact_height": {"label": "Contact Height", "description": "Assess whether the apparent contact height is appropriate relative to the player's body position."},
-    "contact_distance": {"label": "Contact Distance from Body", "description": "Assess whether the apparent contact point is appropriately spaced from the body."},
-    "body_balance": {"label": "Body Balance", "description": "Assess whether the player looks balanced, stable and in control during the selected phase."},
-    "shoulder_vertical_alignment": {"label": "Shoulder Vertical Alignment", "description": "Assess whether the shoulders appear vertically organised and controlled, rather than excessively tilted or collapsed, during the selected phase."},
-    "stance_width": {"label": "Stance Width", "description": "Assess whether the player's stance width is appropriate for the selected phase."},
-    "weight_transfer": {"label": "Weight Transfer / Forward Commitment", "description": "Assess whether the player transfers weight or commits forward appropriately through the selected phase."},
-    "follow_through_shape": {"label": "Follow-through Shape", "description": "Assess whether the follow-through shape looks compact, controlled and appropriate for the shot."}
+    "stance_width": {"label": "Stance Width", "description": "Assess whether the player's stance width is appropriate for the selected phase.", "diagnostic_scale_id": "stance_width"},
+    "knee_bend": {"label": "Knee Bend", "description": "Assess whether the player has an appropriate athletic base and knee flexion for the selected phase.", "diagnostic_scale_id": "knee_bend"},
+    "body_balance": {"label": "Body Balance", "description": "Assess whether the player looks balanced, stable and in control during the selected phase.", "diagnostic_scale_id": "body_balance"},
+    "racket_side_preparation": {"label": "Preparation Position", "description": "Assess whether the arm and racket side are positioned appropriately for readiness.", "diagnostic_scale_id": "preparation_position"},
+    "racket_preparation_height": {"label": "Preparation Height", "description": "Assess whether the visible preparation height is appropriate for the ready position.", "diagnostic_scale_id": "vertical_position"},
+    "court_body_orientation": {"label": "Court Body Orientation", "description": "Assess whether the player's body orientation relative to the court is appropriate for the selected phase.", "diagnostic_scale_id": "rotation"},
+    "shoulder_hip_separation": {"label": "Shoulder / Hip Separation", "description": "Assess whether the relationship between shoulder rotation and hip rotation looks appropriate for the selected phase.", "diagnostic_scale_id": "separation"},
+    "non_hitting_arm_extension": {"label": "Non-hitting Arm Extension", "description": "Assess the extension and structure of the non-hitting arm for the selected phase.", "diagnostic_scale_id": "extension"},
+    "non_hitting_arm_orientation": {"label": "Non-hitting Arm Orientation", "description": "Assess whether the non-hitting arm points in an appropriate direction for the selected phase, independently of elbow extension.", "diagnostic_scale_id": "rotation"},
+    "hitting_arm_structure": {"label": "Hitting-arm Compactness", "description": "Assess whether the hitting arm remains compact, controlled and well organised during preparation.", "diagnostic_scale_id": "compactness"},
+    "hitting_arm_orientation": {"label": "Hitting-arm Orientation", "description": "Assess whether the hitting arm is oriented appropriately during preparation.", "diagnostic_scale_id": "rotation"},
+    "elbow_position": {"label": "Hitting-elbow Compactness", "description": "Assess whether the hitting elbow remains appropriately controlled relative to the body.", "diagnostic_scale_id": "compactness"},
+    "hitting_arm_extension": {"label": "Hitting-arm Extension", "description": "Assess the extension and reach of the hitting arm for the selected phase.", "diagnostic_scale_id": "extension"},
+    "contact_height": {"label": "Contact Height", "description": "Assess whether the apparent contact height is appropriate relative to the player's body position.", "diagnostic_scale_id": "vertical_position"},
+    "contact_distance": {"label": "Contact Distance from Body", "description": "Assess whether the apparent contact point is appropriately spaced from the body.", "diagnostic_scale_id": "contact_distance"},
+    "contact_fore_aft_position": {"label": "Contact Fore / Aft Position", "description": "Assess whether apparent contact occurs at an appropriate fore/aft position relative to the player.", "diagnostic_scale_id": "contact_timing"},
+    "follow_through_height": {"label": "Follow-through Height", "description": "Assess whether the hitting wrist finishes at an appropriate height.", "diagnostic_scale_id": "vertical_position"}
   },
   "aliases": {
     "phases": {},
     "metrics": {}
+  },
+  "retired": {
+    "phases": {
+      "recovery_position": {"reason": "Removed from the active Workbench profile; historical recovery_frame and phase assessment data remain preserved."}
+    },
+    "metrics": {
+      "shoulder_turn": {"reason": "Consolidated into court_body_orientation."},
+      "hip_rotation": {"reason": "Consolidated into court_body_orientation."},
+      "shoulder_vertical_alignment": {"reason": "Consolidated into shoulder_hip_separation and court_body_orientation."},
+      "weight_transfer": {"reason": "Not retained in the signed-off simplified observation set."},
+      "follow_through_shape": {"reason": "Removed as redundant with hitting-elbow compactness, hitting-arm extension and follow-through height."}
+    }
   }
 }

@@ -2,6 +2,10 @@
   "quality_assessments_id": "padel_partner_iq_quality_assessment_scale",
   "quality_assessments_version": "1.0.0",
   "items": {
+    "not_assessed": {
+      "label": "Not Assessed",
+      "description": "The phase or overall shot was intentionally not assessed; use Notes when an explanation is useful."
+    },
     "excellent": {
       "label": "Excellent",
       "description": "An excellent execution of the phase or overall shot."
@@ -17,10 +21,6 @@
     "red_flag": {
       "label": "Red Flag",
       "description": "A significant technical issue requiring immediate coaching attention."
-    },
-    "unclear": {
-      "label": "Unclear",
-      "description": "The quality of the phase or overall shot cannot be judged reliably from the available evidence."
     }
   }
 }

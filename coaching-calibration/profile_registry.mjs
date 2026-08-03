@@ -25,7 +25,7 @@ import { buildProfileIndexKey } from './profile_resolution.mjs';
 const REGISTRY_FILE = './profiles/profile_registry.json';
 const PROFILES_DIR = './profiles/';
 const SUPPORTED_REGISTRY_SCHEMA_VERSIONS = ['1'];
-const SUPPORTED_PROFILE_SCHEMA_VERSIONS = ['1', '2'];
+const SUPPORTED_PROFILE_SCHEMA_VERSIONS = ['1', '2', '3'];
 
 // Well-established sentinel used throughout the app (phaseWorking defaults,
 // buildRatingOptions/buildQualityOptions filtering) to mean "no rating/
@@ -166,6 +166,16 @@ export function validateLoadedProfile({ profileRaw, registryEntry, taxonomy = nu
       for (const observationId of phase.observations) {
         if (!ontology.observations[observationId]) {
           errors.push(`Profile "${registryEntry.profileId}" phase "${phase.id}" references unknown observation id "${observationId}".`);
+        } else if (profile.schema_version === '3') {
+          const scaleId = ontology.observations[observationId].diagnosticScaleId;
+          if (!scaleId || !ontology.diagnosticScales?.[scaleId]) {
+            errors.push(`Profile "${registryEntry.profileId}" observation "${observationId}" has no valid diagnostic scale.`);
+          }
+        }
+      }
+      for (const group of phase.observationGroups || []) {
+        if (!ontology.groups?.[group.id]) {
+          errors.push(`Profile "${registryEntry.profileId}" phase "${phase.id}" references unknown observation group id "${group.id}".`);
         }
       }
     }
@@ -183,6 +193,10 @@ export function validateLoadedProfile({ profileRaw, registryEntry, taxonomy = nu
       const profilePhaseMetrics = Object.fromEntries(profile.phases.map((phase) => [phase.id, phase.observations]));
       if (JSON.stringify(profilePhaseMetrics) !== JSON.stringify(ontology.contractPhaseMetrics)) {
         errors.push('Profile "groundstroke_forehand" phase observations differ from the shared forehand observation contract.');
+      }
+      const profilePhaseGroups = Object.fromEntries(profile.phases.map((phase) => [phase.id, phase.observationGroups]));
+      if (ontology.contractPhaseGroups && JSON.stringify(profilePhaseGroups) !== JSON.stringify(ontology.contractPhaseGroups)) {
+        errors.push('Profile "groundstroke_forehand" observation groups differ from the shared forehand observation contract.');
       }
     }
   }

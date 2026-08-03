@@ -1,0 +1,125 @@
+{
+  "diagnostic_scales_id": "padel_partner_iq_forehand_diagnostic_scales",
+  "diagnostic_scales_version": "1.0.0",
+  "description": "Observation-specific directional diagnoses. Quality implication remains separate from the displayed diagnosis and supports Workbench inheritance/defaulting.",
+  "scales": {
+    "generic_amount": {
+      "items": [
+        {"id": "much_too_little", "label": "Much too little", "quality_id": "red_flag"},
+        {"id": "too_little", "label": "Too little", "quality_id": "needs_work"},
+        {"id": "in_range", "label": "In range", "quality_id": "good"},
+        {"id": "target", "label": "Target", "quality_id": "excellent"},
+        {"id": "too_much", "label": "Too much", "quality_id": "needs_work"},
+        {"id": "much_too_much", "label": "Much too much", "quality_id": "red_flag"}
+      ]
+    },
+    "stance_width": {
+      "items": [
+        {"id": "much_too_narrow", "label": "Much too narrow", "quality_id": "red_flag"},
+        {"id": "too_narrow", "label": "Too narrow", "quality_id": "needs_work"},
+        {"id": "in_range", "label": "In range", "quality_id": "good"},
+        {"id": "target_width", "label": "Target width", "quality_id": "excellent"},
+        {"id": "too_wide", "label": "Too wide", "quality_id": "needs_work"},
+        {"id": "much_too_wide", "label": "Much too wide", "quality_id": "red_flag"}
+      ]
+    },
+    "knee_bend": {
+      "items": [
+        {"id": "much_too_straight", "label": "Much too straight", "quality_id": "red_flag"},
+        {"id": "too_straight", "label": "Too straight", "quality_id": "needs_work"},
+        {"id": "in_range", "label": "In range", "quality_id": "good"},
+        {"id": "target_bend", "label": "Target bend", "quality_id": "excellent"},
+        {"id": "too_bent", "label": "Too bent", "quality_id": "needs_work"},
+        {"id": "much_too_bent", "label": "Much too bent", "quality_id": "red_flag"}
+      ]
+    },
+    "body_balance": {
+      "items": [
+        {"id": "strongly_backward", "label": "Strongly backward", "quality_id": "red_flag"},
+        {"id": "backward", "label": "Backward", "quality_id": "needs_work"},
+        {"id": "balanced", "label": "Balanced", "quality_id": "good"},
+        {"id": "forward", "label": "Forward", "quality_id": "good"},
+        {"id": "strongly_forward", "label": "Strongly forward", "quality_id": "needs_work"},
+        {"id": "laterally_unbalanced", "label": "Laterally unbalanced", "quality_id": "needs_work"}
+      ]
+    },
+    "preparation_position": {
+      "items": [
+        {"id": "by_hitting_side", "label": "By hitting side", "quality_id": "needs_work"},
+        {"id": "partially_prepared", "label": "Partially prepared", "quality_id": "needs_work"},
+        {"id": "centrally_prepared", "label": "Centrally prepared", "quality_id": "good"},
+        {"id": "two_handed_central", "label": "Two-handed central", "quality_id": "excellent"}
+      ]
+    },
+    "vertical_position": {
+      "items": [
+        {"id": "much_too_low", "label": "Much too low", "quality_id": "red_flag"},
+        {"id": "too_low", "label": "Too low", "quality_id": "needs_work"},
+        {"id": "in_range", "label": "In range", "quality_id": "good"},
+        {"id": "target_height", "label": "Target height", "quality_id": "excellent"},
+        {"id": "too_high", "label": "Too high", "quality_id": "needs_work"},
+        {"id": "much_too_high", "label": "Much too high", "quality_id": "red_flag"}
+      ]
+    },
+    "rotation": {
+      "items": [
+        {"id": "severely_over_rotated", "label": "Severely over-rotated", "quality_id": "red_flag"},
+        {"id": "over_rotated", "label": "Over-rotated", "quality_id": "needs_work"},
+        {"id": "in_range", "label": "In range", "quality_id": "good"},
+        {"id": "target_orientation", "label": "Target orientation", "quality_id": "excellent"},
+        {"id": "under_rotated", "label": "Under-rotated", "quality_id": "needs_work"},
+        {"id": "severely_under_rotated", "label": "Severely under-rotated", "quality_id": "red_flag"}
+      ]
+    },
+    "separation": {
+      "items": [
+        {"id": "severely_over_separated", "label": "Severely over-separated", "quality_id": "red_flag"},
+        {"id": "over_separated", "label": "Over-separated", "quality_id": "needs_work"},
+        {"id": "in_range", "label": "In range", "quality_id": "good"},
+        {"id": "target_separation", "label": "Target separation", "quality_id": "excellent"},
+        {"id": "under_separated", "label": "Under-separated", "quality_id": "needs_work"},
+        {"id": "severely_under_separated", "label": "Severely under-separated", "quality_id": "red_flag"}
+      ]
+    },
+    "extension": {
+      "items": [
+        {"id": "severely_over_extended", "label": "Severely over-extended", "quality_id": "red_flag"},
+        {"id": "over_extended", "label": "Over-extended", "quality_id": "needs_work"},
+        {"id": "in_range", "label": "In range", "quality_id": "good"},
+        {"id": "target_extension", "label": "Target extension", "quality_id": "excellent"},
+        {"id": "under_extended", "label": "Under-extended", "quality_id": "needs_work"},
+        {"id": "severely_under_extended", "label": "Severely under-extended", "quality_id": "red_flag"}
+      ]
+    },
+    "compactness": {
+      "items": [
+        {"id": "much_too_open", "label": "Much too open", "quality_id": "red_flag"},
+        {"id": "too_open", "label": "Too open", "quality_id": "needs_work"},
+        {"id": "in_range", "label": "In range", "quality_id": "good"},
+        {"id": "target_compactness", "label": "Target compactness", "quality_id": "excellent"},
+        {"id": "too_tight", "label": "Too tight", "quality_id": "needs_work"},
+        {"id": "much_too_tight", "label": "Much too tight", "quality_id": "red_flag"}
+      ]
+    },
+    "contact_distance": {
+      "items": [
+        {"id": "much_too_close", "label": "Much too close", "quality_id": "red_flag"},
+        {"id": "too_close", "label": "Too close", "quality_id": "needs_work"},
+        {"id": "in_range", "label": "In range", "quality_id": "good"},
+        {"id": "target_distance", "label": "Target distance", "quality_id": "excellent"},
+        {"id": "too_far", "label": "Too far", "quality_id": "needs_work"},
+        {"id": "much_too_far", "label": "Much too far", "quality_id": "red_flag"}
+      ]
+    },
+    "contact_timing": {
+      "items": [
+        {"id": "much_too_late", "label": "Much too late", "quality_id": "red_flag"},
+        {"id": "late", "label": "Late", "quality_id": "needs_work"},
+        {"id": "in_range", "label": "In range", "quality_id": "good"},
+        {"id": "target_contact_position", "label": "Target contact position", "quality_id": "excellent"},
+        {"id": "early", "label": "Early", "quality_id": "needs_work"},
+        {"id": "much_too_early", "label": "Much too early", "quality_id": "red_flag"}
+      ]
+    }
+  }
+}

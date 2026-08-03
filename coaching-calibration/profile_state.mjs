@@ -14,13 +14,29 @@ function normalizePhase(phase) {
   if (!id) {
     return null;
   }
-  const observations = Array.isArray(phase.observations)
+  const directObservations = Array.isArray(phase.observations)
     ? phase.observations.filter((value) => typeof value === 'string' && value.trim())
     : [];
+  const observationGroups = Array.isArray(phase.observation_groups)
+    ? phase.observation_groups
+      .map((group) => {
+        if (!group || typeof group !== 'object') return null;
+        const groupId = DEFAULT_STRING(group.id, '');
+        const groupObservations = Array.isArray(group.observations)
+          ? group.observations.filter((value) => typeof value === 'string' && value.trim())
+          : [];
+        return groupId ? { id: groupId, observations: groupObservations } : null;
+      })
+      .filter(Boolean)
+    : [];
+  const observations = observationGroups.length > 0
+    ? observationGroups.flatMap((group) => group.observations)
+    : directObservations;
   return {
     id,
     shortcut: DEFAULT_STRING(phase.shortcut, ''),
     observations,
+    observationGroups,
     // Preserve any inline label from legacy profiles; ontology takes precedence downstream.
     label: DEFAULT_STRING(phase.label, ''),
   };
@@ -191,10 +207,38 @@ export function buildPhaseViewModels(profile, ontology) {
       shortcut: phase.shortcut,
       observations: phase.observations.map((observationId) => {
         const meta = getObservationMeta(ontology, observationId);
-        return { id: observationId, label: meta.label, description: meta.description };
+        const diagnosticOptions = getDiagnosticOptions(ontology, meta.diagnosticScaleId);
+        return {
+          id: observationId,
+          label: meta.label,
+          description: meta.description,
+          diagnosticScaleId: meta.diagnosticScaleId || '',
+          defaultGoodDiagnosisId: diagnosticOptions.find((item) => item.qualityId === 'good')?.id || '',
+        };
       }),
+      observationGroups: phase.observationGroups.map((group) => ({
+        id: group.id,
+        label: ontology?.groups?.[group.id]?.label || group.id,
+        observations: group.observations.map((observationId) => {
+          const meta = getObservationMeta(ontology, observationId);
+          const diagnosticOptions = getDiagnosticOptions(ontology, meta.diagnosticScaleId);
+          return {
+            id: observationId,
+            label: meta.label,
+            description: meta.description,
+            diagnosticScaleId: meta.diagnosticScaleId || '',
+            defaultGoodDiagnosisId: diagnosticOptions.find((item) => item.qualityId === 'good')?.id || '',
+          };
+        }),
+      })),
     };
   });
+}
+
+export function getDiagnosticOptions(ontology, scaleId) {
+  return Array.isArray(ontology?.diagnosticScales?.[scaleId])
+    ? ontology.diagnosticScales[scaleId].map((item) => ({ ...item }))
+    : [];
 }
 
 // Rating options (excluding not_assessed, which the UI supplies as the default).
@@ -210,7 +254,7 @@ export function buildRatingOptions(profile, ontology) {
 // Quality options (excluding not_assessed) for phase and overall quality controls.
 export function buildQualityOptions(profile, ontology) {
   return getProfileQualityIds(profile)
-    .filter((id) => id !== 'not_assessed')
+    .filter((id) => id !== 'unclear')
     .map((id) => {
       const meta = getQualityMeta(ontology, id);
       return { id, label: meta.label, description: meta.description };
