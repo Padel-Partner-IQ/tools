@@ -14,9 +14,9 @@
 
 import { createEnvironment, describeEnvironmentError } from './environment/index.mjs';
 import { isEditableTarget } from './keyboard_shortcuts.mjs';
-import { deriveVideoId } from './video_id.mjs';
 import {
   AnnotationValidationError,
+  CANONICAL_SCHEMA_VERSION,
   buildAnnotationCsvText,
   createAnnotationRunMetadata,
   newSessionId,
@@ -69,13 +69,16 @@ import { findPhaseFrameOwner, buildFrameInUseErrorMessage } from './duplicate_fr
 import { computeShotReadiness } from './shot_readiness.mjs';
 import { computeAnnotationCompleteness, describeAnnotationCompleteness } from './annotation_completeness.mjs';
 import { BUILD_METADATA } from './build_metadata.mjs';
+import { buildAnnotationExportFilename, classifyAnnotationArtifact } from './artifact_filename.mjs';
 
 const environment = createEnvironment(window);
 
 // A load sequence (video src assignment + metadata probe) that hasn't
 // resolved within this window is treated as failed -- the app must always
 // reach a terminal loaded/failed state, never spin indefinitely.
-const VIDEO_LOAD_TIMEOUT_MS = 20000;
+// Hashing a large camera-original file can legitimately take longer than
+// metadata decoding, especially in a browser on an older laptop.
+const VIDEO_LOAD_TIMEOUT_MS = 120000;
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -296,7 +299,10 @@ async function loadVideoFromFile(file) {
     currentVideoUrl = URL.createObjectURL(file);
     await assignVideoSrcAndAwaitReady(currentVideoUrl);
 
-    const probed = await probeVideoMetadataInBrowser(file);
+    const [probed, videoSha256] = await Promise.all([
+      probeVideoMetadataInBrowser(file),
+      environment.hashVideoFile(file),
+    ]);
     if (!probed) {
       throw new Error("Unable to determine this video's frame rate automatically -- the file may be corrupt or in an unsupported format.");
     }
@@ -304,6 +310,7 @@ async function loadVideoFromFile(file) {
       filename: videoFileName,
       frameRateFps: probed.frame_rate_fps,
       videoMetadataProvider: 'mp4box',
+      videoSha256,
       width: probed.width,
       height: probed.height,
       durationSec: probed.duration_sec,
@@ -321,7 +328,10 @@ async function loadVideoFromPath(path, filename) {
     }
     await assignVideoSrcAndAwaitReady(convertFileSrc(path));
 
-    const rawJson = await environment.probeVideoFrameRate(path);
+    const [rawJson, videoSha256] = await Promise.all([
+      environment.probeVideoFrameRate(path),
+      environment.hashVideoFile(path),
+    ]);
     const probed = rawJson ? parseVideoMetadataFromFfprobeJson(rawJson) : null;
     if (!probed) {
       throw new Error("Unable to determine this video's frame rate automatically (the ffprobe metadata probe failed or returned no usable video stream).");
@@ -330,6 +340,7 @@ async function loadVideoFromPath(path, filename) {
       filename,
       frameRateFps: probed.frame_rate_fps,
       videoMetadataProvider: 'ffprobe',
+      videoSha256,
       width: probed.width,
       height: probed.height,
       durationSec: probed.duration_sec,
@@ -423,6 +434,7 @@ function ensureRunMetadata() {
     videoMetadataProvider: realVideoMeta.video_metadata_provider,
     sessionId: newSessionId(),
     createdAt: new Date().toISOString(),
+    videoSha256: realVideoMeta.video_sha256,
   });
 }
 
@@ -523,7 +535,7 @@ function applyCsvRows(rows) {
 
   if (csvMeta) {
     const comparison = compareVideoIdentity(csvMeta, realVideoMeta);
-    if (comparison === 'conflicting_identity' || comparison === 'conflicting_frame_rate') {
+    if (comparison === 'conflicting_identity' || comparison === 'conflicting_frame_rate' || comparison === 'conflicting_hash') {
       showCsvError(buildMismatchMessage(comparison, csvMeta, realVideoMeta));
       return;
     }
@@ -564,6 +576,9 @@ function reconcilePendingCsv() {
 }
 
 function buildMismatchMessage(comparison, csvMeta, realMeta) {
+  if (comparison === 'conflicting_hash') {
+    return 'This Annotation CSV contains a SHA-256 hash for a different video. Open the exact matching video or CSV -- import blocked.';
+  }
   if (comparison === 'conflicting_identity') {
     return `This Annotation CSV was recorded for a different video (video_id="${csvMeta.video_id}") than the one currently open (video_id="${realMeta.video_id}"). Open the matching video or CSV -- import blocked.`;
   }
@@ -1469,6 +1484,17 @@ function exportableShots() {
   return shots.filter((shot) => shot.saved !== false).map(withCompleteness);
 }
 
+function exportArtifactRows() {
+  const rows = exportableShots();
+  const artifactKind = classifyAnnotationArtifact(rows);
+  return rows.map((row) => ({
+    ...row,
+    schema_version: CANONICAL_SCHEMA_VERSION,
+    video_sha256: realVideoMeta?.video_sha256 || '',
+    artifact_kind: artifactKind,
+  }));
+}
+
 /**
  * Export is blocked only on missing global metadata -- Annotator, required
  * and session-level. Per-shot completeness (phases, Overall Quality) is
@@ -1492,13 +1518,14 @@ function updateExportState() {
 }
 
 function buildExportFilename() {
-  const base = videoFileName ? deriveVideoId(videoFileName) : 'annotation';
-  return `${base}_annotations.csv`;
+  return buildAnnotationExportFilename(videoFileName, exportArtifactRows());
 }
 
 async function exportAnnotationCsv() {
   try {
-    const text = buildAnnotationCsvText(exportableShots());
+    const rows = exportArtifactRows();
+    validateAnnotationRows(rows);
+    const text = buildAnnotationCsvText(rows);
     await environment.saveTextFile({ content: text, suggestedName: buildExportFilename(), mimeType: 'text/csv' });
     showFeedback('Annotation CSV saved.', 'success');
   } catch (error) {

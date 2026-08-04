@@ -21,11 +21,14 @@
 // - parseAnnotationCsv -- parse CSV text into typed rows.
 // - validateAnnotationRows -- check parsed rows for problems.
 
-export const CANONICAL_SCHEMA_VERSION = '2';
+import { classifyAnnotationArtifact } from './artifact_filename.mjs';
+
+export const CANONICAL_SCHEMA_VERSION = '3';
 // An array, not a single value: adding a future "3" is a one-line change here
 // plus a new entry in SCHEMA_VERSION_READERS, without touching this version's
 // logic. Mirrors the Python SUPPORTED_SCHEMA_VERSIONS set.
-export const SUPPORTED_SCHEMA_VERSIONS = ['1', '2'];
+export const SUPPORTED_SCHEMA_VERSIONS = ['1', '2', '3'];
+export const VALID_ARTIFACT_KINDS = ['annotated', 'observed', 'observed-annotated'];
 
 export const ANNOTATION_TOOL_VERSION = 'annotation_workbench/1.0';
 
@@ -116,6 +119,10 @@ export const CANONICAL_ANNOTATION_CSV_FIELDNAMES = [
   'contact_annotation_status',
   'phase_annotation_status',
   'coaching_assessment_status',
+  // v3 provenance additions. A legacy import may leave video_sha256 blank
+  // until the matching video is opened; every new Workbench export stamps it.
+  'video_sha256',
+  'artifact_kind',
 ];
 
 const FRAME_COLUMNS = [
@@ -144,8 +151,11 @@ const OPTIONAL_ON_IMPORT_COLUMNS = [
   'contact_annotation_status',
   'phase_annotation_status',
   'coaching_assessment_status',
+  'video_sha256',
+  'artifact_kind',
 ];
 const V2_ONLY_COLUMNS = ['hitter_id', 'contact_annotation_status', 'phase_annotation_status', 'coaching_assessment_status'];
+const V3_ONLY_COLUMNS = ['video_sha256', 'artifact_kind'];
 
 /**
  * Raised when one or more rows fail canonical annotation CSV validation, or
@@ -172,6 +182,8 @@ export function createAnnotationRunMetadata({
   toolVersion = ANNOTATION_TOOL_VERSION,
   sessionId = '',
   createdAt = '',
+  videoSha256 = '',
+  artifactKind = 'observed',
 } = {}) {
   return {
     video_id: videoId,
@@ -182,6 +194,8 @@ export function createAnnotationRunMetadata({
     tool_version: toolVersion,
     session_id: sessionId,
     created_at: createdAt,
+    video_sha256: videoSha256,
+    artifact_kind: artifactKind,
   };
 }
 
@@ -240,6 +254,8 @@ export function buildCanonicalRow(shot, { runMetadata, overrides = {} } = {}) {
     contact_annotation_status: CONTACT_ANNOTATION_STATUS_ABSENT,
     phase_annotation_status: COMPLETENESS_NOT_APPLICABLE,
     coaching_assessment_status: COMPLETENESS_NOT_APPLICABLE,
+    video_sha256: runMetadata.video_sha256 ?? '',
+    artifact_kind: runMetadata.artifact_kind ?? 'observed',
   };
   return { ...row, ...overrides };
 }
@@ -334,7 +350,7 @@ function parseOptionalBool(rawValue) {
 function parseBaseV1Columns(rawRow) {
   const parsed = {};
   for (const column of CANONICAL_ANNOTATION_CSV_FIELDNAMES) {
-    if (V2_ONLY_COLUMNS.includes(column)) continue;
+    if (V2_ONLY_COLUMNS.includes(column) || V3_ONLY_COLUMNS.includes(column)) continue;
     const rawValue = rawRow[column] ?? '';
     if (FRAME_COLUMNS.includes(column) || column === 'shot_index') {
       parsed[column] = parseOptionalInt(rawValue);
@@ -395,7 +411,9 @@ function readV1Row(rawRow) {
   parsed.contact_annotation_status = defaultContactAnnotationStatus(parsed);
   parsed.phase_annotation_status = defaultPhaseAnnotationStatus(parsed);
   parsed.coaching_assessment_status = defaultCoachingAssessmentStatus(parsed);
-  parsed.schema_version = '2';
+  parsed.video_sha256 = '';
+  parsed.artifact_kind = '';
+  parsed.schema_version = '3';
   return parsed;
 }
 
@@ -412,11 +430,21 @@ function readV2Row(rawRow) {
   parsed.contact_annotation_status = rawRow.contact_annotation_status || defaultContactAnnotationStatus(parsed);
   parsed.phase_annotation_status = rawRow.phase_annotation_status || defaultPhaseAnnotationStatus(parsed);
   parsed.coaching_assessment_status = rawRow.coaching_assessment_status || defaultCoachingAssessmentStatus(parsed);
+  parsed.video_sha256 = '';
+  parsed.artifact_kind = '';
+  parsed.schema_version = '3';
+  return parsed;
+}
+
+function readV3Row(rawRow) {
+  const parsed = readV2Row(rawRow);
+  parsed.video_sha256 = rawRow.video_sha256 ?? '';
+  parsed.artifact_kind = rawRow.artifact_kind ?? '';
   parsed.schema_version = rawRow.schema_version ?? CANONICAL_SCHEMA_VERSION;
   return parsed;
 }
 
-const SCHEMA_VERSION_READERS = { 1: readV1Row, 2: readV2Row };
+const SCHEMA_VERSION_READERS = { 1: readV1Row, 2: readV2Row, 3: readV3Row };
 
 /**
  * Parse canonical annotation CSV text into typed rows.
@@ -465,7 +493,9 @@ export function parseAnnotationCsv(text) {
   // schema_version selects its reader. In practice every row of one export
   // shares the same schema_version (it is run-level metadata denormalized
   // onto every row), but nothing here assumes that.
-  return rawRows.map((rawRow) => (SCHEMA_VERSION_READERS[rawRow.schema_version] ?? readV1Row)(rawRow));
+  const parsedRows = rawRows.map((rawRow) => (SCHEMA_VERSION_READERS[rawRow.schema_version] ?? readV1Row)(rawRow));
+  const derivedKind = classifyAnnotationArtifact(parsedRows);
+  return parsedRows.map((row) => ({ ...row, artifact_kind: row.artifact_kind || derivedKind }));
 }
 
 /**
@@ -497,6 +527,9 @@ export function validateAnnotationRows(rows) {
   if (duplicateShotIndices.length > 0) {
     errors.push(`Duplicate shot_index value(s): ${duplicateShotIndices.join(', ')}.`);
   }
+
+  const artifactKinds = new Set(rows.map((row) => row.artifact_kind).filter(Boolean));
+  if (artifactKinds.size > 1) errors.push('Rows do not agree on artifact_kind.');
 
   rows.forEach((row, index) => {
     errors.push(...validateRow(row, index + 2));
@@ -547,6 +580,15 @@ function validateRow(row, rowNumber) {
   const source = row.source;
   if (source && !VALID_SOURCES.includes(source)) {
     errors.push(`${label}: source ${JSON.stringify(source)} is not one of ${JSON.stringify([...VALID_SOURCES].sort())}.`);
+  }
+
+  if (row.video_sha256 && !/^[0-9a-f]{64}$/.test(row.video_sha256)) {
+    errors.push(`${label}: video_sha256 must be 64 lowercase hexadecimal characters or blank.`);
+  }
+  if (row.artifact_kind && !VALID_ARTIFACT_KINDS.includes(row.artifact_kind)) {
+    errors.push(`${label}: artifact_kind ${JSON.stringify(row.artifact_kind)} is not one of ${JSON.stringify(VALID_ARTIFACT_KINDS)}.`);
+  } else if (row.schema_version === '3' && !row.artifact_kind) {
+    errors.push(`${label}: artifact_kind is required for schema_version='3'.`);
   }
 
   const phaseAssessments = row.phase_assessments;

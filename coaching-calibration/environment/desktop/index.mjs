@@ -78,5 +78,10 @@ export function createDesktopEnvironment(globalObject = window) {
         return null;
       }
     },
+
+    async hashVideoFile(path) {
+      if (!invoke) throw new Error('The desktop video hashing bridge is unavailable.');
+      return invoke('hash_video_file', { path });
+    },
   };
 }

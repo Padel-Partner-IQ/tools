@@ -145,12 +145,13 @@ export function frameIndexForTime(timeSeconds, frameRateFps, frameCount = null) 
  * duration. `videoMetadataProvider` must be one of annotation_csv.mjs's
  * VALID_VIDEO_METADATA_PROVIDERS ('ffprobe' on desktop, 'mp4box' in browser).
  */
-export function deriveRealVideoMetadata({ filename, frameRateFps, videoMetadataProvider, width = null, height = null, durationSec = null, frameCount = null }) {
+export function deriveRealVideoMetadata({ filename, frameRateFps, videoMetadataProvider, videoSha256 = '', width = null, height = null, durationSec = null, frameCount = null }) {
   return {
     video_id: deriveVideoId(filename),
     video_filename: filename,
     frame_rate_fps: frameRateFps,
     video_metadata_provider: videoMetadataProvider,
+    video_sha256: videoSha256,
     width,
     height,
     duration_sec: durationSec,
@@ -185,9 +186,9 @@ export function extractCsvVideoMetadata(rows) {
   if (!rows || rows.length === 0) {
     return null;
   }
-  const distinctIdentities = new Set(rows.map((row) => `${row.video_id} ${row.frame_rate_fps}`));
+  const distinctIdentities = new Set(rows.map((row) => `${row.video_id} ${row.frame_rate_fps} ${row.video_sha256 || ''}`));
   if (distinctIdentities.size > 1) {
-    throw new Error('CSV rows do not agree on video_id/frame_rate_fps -- this file appears to mix rows from more than one video.');
+    throw new Error('CSV rows do not agree on video_id/frame_rate_fps/video_sha256 -- this file appears to mix rows from more than one video.');
   }
   const [first] = rows;
   return {
@@ -195,6 +196,7 @@ export function extractCsvVideoMetadata(rows) {
     video_filename: first.video_filename,
     frame_rate_fps: first.frame_rate_fps,
     video_metadata_provider: first.video_metadata_provider,
+    video_sha256: first.video_sha256 || '',
   };
 }
 
@@ -214,6 +216,11 @@ export function extractCsvVideoMetadata(rows) {
  * Identity conflicts take priority over frame-rate conflicts when both are present.
  */
 export function compareVideoIdentity(csvMeta, realMeta) {
+  if (csvMeta.video_sha256 && realMeta.video_sha256) {
+    if (csvMeta.video_sha256 !== realMeta.video_sha256) return 'conflicting_hash';
+    if (!areFrameRatesCompatible(csvMeta.frame_rate_fps, realMeta.frame_rate_fps)) return 'conflicting_frame_rate';
+    return csvMeta.video_filename === realMeta.video_filename ? 'exact_match' : 'harmless_difference';
+  }
   if (csvMeta.video_id !== realMeta.video_id) {
     return 'conflicting_identity';
   }

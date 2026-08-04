@@ -82,5 +82,14 @@ export function createBrowserEnvironment(globalObject = window) {
     async probeVideoFrameRate() {
       return null;
     },
+
+    async hashVideoFile(file) {
+      const subtle = globalObject.crypto?.subtle;
+      if (!subtle || typeof file?.arrayBuffer !== 'function') {
+        throw new Error('SHA-256 hashing is unavailable in this browser.');
+      }
+      const digest = await subtle.digest('SHA-256', await file.arrayBuffer());
+      return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+    },
   };
 }
