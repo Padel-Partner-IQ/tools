@@ -36,7 +36,7 @@ button:disabled { cursor: not-allowed; opacity: 0.6; transform: none; box-shadow
 
 .topbar-identity h1 { margin: 0; font-size: 1.35rem; }
 
-/* Restrained, coach-readable build provenance (e.g. "v0.4.0 · build a1b2c3d")
+/* Restrained, coach-readable build provenance (e.g. "v0.4.1 · build a1b2c3d")
    -- small and muted next to the title, never competing with it, but plain
    text (not a tooltip) so it's easy to read back or include in a
    screenshot. See docs/tooling/annotation-workbench-development.md#build-metadata. */

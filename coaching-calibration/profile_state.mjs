@@ -76,16 +76,26 @@ function normalizeClassification(profile) {
   return { shot_class: shotClass, shot_type: shotType, shot_variant: shotVariant };
 }
 
-/** vocabulary.<file>.version fields (new schema) -- best-effort combined version for display, mirroring ontology.mjs's deriveOntologyVersion. */
+/**
+ * Backward-compatible primary vocabulary version for profile display/export.
+ * Supporting vocabulary components are independently versioned; observations
+ * are primary because they carry the durable assessment identities.
+ */
 function deriveVocabularyVersion(vocabulary) {
   if (!vocabulary || typeof vocabulary !== 'object') return '';
-  const versions = [...new Set(
-    Object.values(vocabulary)
-      .map((entry) => (entry && typeof entry.version === 'string' ? entry.version.trim() : ''))
-      .filter(Boolean),
-  )];
-  if (versions.length === 0) return '';
-  return versions.length === 1 ? versions[0] : `mixed:${versions.slice().sort().join('+')}`;
+  const versionOf = (entry) => (entry && typeof entry.version === 'string' ? entry.version.trim() : '');
+  return versionOf(vocabulary.observations)
+    || versionOf(vocabulary.phases)
+    || Object.values(vocabulary).map(versionOf).find(Boolean)
+    || '';
+}
+
+function deriveVocabularyComponentVersions(vocabulary) {
+  if (!vocabulary || typeof vocabulary !== 'object') return {};
+  return Object.fromEntries(Object.entries(vocabulary).map(([component, entry]) => [
+    component,
+    entry && typeof entry.version === 'string' && entry.version.trim() ? entry.version.trim() : 'unknown',
+  ]));
 }
 
 export function normalizeProfile(profile) {
@@ -101,6 +111,7 @@ export function normalizeProfile(profile) {
       classification: null,
       ontology_id: '',
       ontology_version: 'unknown',
+      vocabulary_versions: {},
       phases: [],
       ratings: [],
       quality_ratings: [],
@@ -136,6 +147,7 @@ export function normalizeProfile(profile) {
     classification,
     ontology_id: DEFAULT_STRING(profile.ontology_id, ''),
     ontology_version: vocabularyVersion || DEFAULT_STRING(profile.ontology_version, 'unknown'),
+    vocabulary_versions: deriveVocabularyComponentVersions(profile.vocabulary),
     phases: rawPhases.map(normalizePhase).filter(Boolean),
     ratings: normalizeIdList(profile.ratings),
     quality_ratings: normalizeIdList(profile.quality_ratings),

@@ -54,28 +54,41 @@ function extractItems(raw, key) {
   return result;
 }
 
-// Derive a single ontology version from the per-file versions.
-//
-// - if all present files share the same version, that version is returned
-// - if versions differ, a clear combined value is returned and a warning is
-//   raised so the mismatch is visible during development
-// - if no versions are present, 'unknown' is returned
+// Preserve the historical single ontology-version field by treating the
+// observation contract as its primary version. Supporting vocabularies are
+// independently versioned and exposed through componentVersions below; their
+// numbers are not expected to match.
 export function deriveOntologyVersion(fileVersions) {
-  const present = (fileVersions || [])
-    .map((entry) => (typeof entry?.version === 'string' ? entry.version.trim() : ''))
-    .filter(Boolean);
+  const entries = (fileVersions || []).map((entry) => ({
+    file: entry?.file,
+    version: typeof entry?.version === 'string' ? entry.version.trim() : '',
+  }));
+  const contract = entries.find((entry) => entry.file === 'observation_contract' && entry.version);
+  return contract?.version || entries.find((entry) => entry.version)?.version || 'unknown';
+}
 
-  if (present.length === 0) {
-    return 'unknown';
+export function deriveComponentVersions(fileVersions) {
+  return Object.fromEntries((fileVersions || []).map((entry) => [
+    entry.file,
+    typeof entry?.version === 'string' && entry.version.trim() ? entry.version.trim() : 'unknown',
+  ]));
+}
+
+export function findOntologyCompatibilityErrors(ontology) {
+  const errors = [];
+  for (const [observationId, observation] of Object.entries(ontology?.observations || {})) {
+    if (observation.diagnosticScaleId && !ontology?.diagnosticScales?.[observation.diagnosticScaleId]) {
+      errors.push(`Observation "${observationId}" references unknown diagnostic scale "${observation.diagnosticScaleId}".`);
+    }
   }
-
-  const unique = [...new Set(present)];
-  if (unique.length === 1) {
-    return unique[0];
+  for (const [scaleId, items] of Object.entries(ontology?.diagnosticScales || {})) {
+    for (const item of items) {
+      if (!item.qualityId || !ontology?.qualityAssessments?.[item.qualityId]) {
+        errors.push(`Diagnostic "${scaleId}.${item.id}" references unknown quality "${item.qualityId || '<blank>'}".`);
+      }
+    }
   }
-
-  console.warn('[ontology] version mismatch across ontology files:', fileVersions);
-  return `mixed:${unique.slice().sort().join('+')}`;
+  return errors;
 }
 
 // Normalize the four raw ontology payloads into a single lookup structure.
@@ -83,7 +96,9 @@ export function normalizeOntology({ contract, observations, phases, ratings, qua
   const contractPhases = contract && contract.phases;
   const contractMetrics = contract && contract.metrics;
   const fileVersions = [
-    { file: 'forehand_observation_contract', version: contract && contract.contract_version },
+    { file: 'observation_contract', version: contract && contract.contract_version },
+    { file: 'observation_vocabulary', version: observations && observations.ontology_version },
+    { file: 'phase_vocabulary', version: phases && phases.phases_version },
     { file: 'ratings', version: ratings && ratings.ratings_version },
     { file: 'quality_assessments', version: qualityAssessments && qualityAssessments.quality_assessments_version },
     { file: 'diagnostic_scales', version: diagnosticScales && diagnosticScales.diagnostic_scales_version },
@@ -102,7 +117,7 @@ export function normalizeOntology({ contract, observations, phases, ratings, qua
       : [];
   }
 
-  return {
+  const ontology = {
     observations: {
       ...extractItems(observations, 'observations'),
       ...(contractMetrics ? extractItems({ observations: contractMetrics }, 'observations') : {}),
@@ -122,8 +137,11 @@ export function normalizeOntology({ contract, observations, phases, ratings, qua
     groups,
     diagnosticScales: normalizedScales,
     version: deriveOntologyVersion(fileVersions),
+    componentVersions: deriveComponentVersions(fileVersions),
     fileVersions,
   };
+  ontology.compatibilityErrors = findOntologyCompatibilityErrors(ontology);
+  return ontology;
 }
 
 function lookupMeta(collection, id) {
@@ -183,5 +201,9 @@ export async function loadOntology(fetchImpl = fetch) {
     loadJson(fetchImpl, urls.qualityAssessments),
     loadJson(fetchImpl, urls.diagnosticScales),
   ]);
-  return normalizeOntology({ contract, observations, phases, ratings, qualityAssessments, diagnosticScales });
+  const ontology = normalizeOntology({ contract, observations, phases, ratings, qualityAssessments, diagnosticScales });
+  if (ontology.compatibilityErrors.length > 0) {
+    throw new Error(`Incompatible coaching ontology:\n${ontology.compatibilityErrors.join('\n')}`);
+  }
+  return ontology;
 }

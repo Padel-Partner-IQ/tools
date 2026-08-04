@@ -1597,7 +1597,7 @@ document.addEventListener('keydown', (event) => {
 
 /**
  * Concise, restrained build provenance next to the app title (e.g.
- * "v0.4.0 · build a1b2c3d", or "v0.4.0 · development build" for a
+ * "v0.4.1 · build a1b2c3d", or "v0.4.1 · development build" for a
  * genuinely modified local source tree), read entirely from the generated
  * build_metadata.mjs -- never hardcoded or fabricated here. The raw word
  * "dirty" is never shown to the coach; BUILD_METADATA.isDirty only changes
