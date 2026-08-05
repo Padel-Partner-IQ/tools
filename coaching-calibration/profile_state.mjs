@@ -226,6 +226,9 @@ export function buildPhaseViewModels(profile, ontology) {
           description: meta.description,
           diagnosticScaleId: meta.diagnosticScaleId || '',
           defaultGoodDiagnosisId: diagnosticOptions.find((item) => item.qualityId === 'good')?.id || '',
+          defaultDiagnosisIdByQuality: Object.fromEntries(
+            diagnosticOptions.map((item) => [item.qualityId, item.id]),
+          ),
         };
       }),
       observationGroups: phase.observationGroups.map((group) => ({
@@ -240,6 +243,9 @@ export function buildPhaseViewModels(profile, ontology) {
             description: meta.description,
             diagnosticScaleId: meta.diagnosticScaleId || '',
             defaultGoodDiagnosisId: diagnosticOptions.find((item) => item.qualityId === 'good')?.id || '',
+            defaultDiagnosisIdByQuality: Object.fromEntries(
+              diagnosticOptions.map((item) => [item.qualityId, item.id]),
+            ),
           };
         }),
       })),

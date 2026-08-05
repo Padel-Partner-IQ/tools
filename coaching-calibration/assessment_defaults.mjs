@@ -1,5 +1,3 @@
-import { getPhaseAssessment, setPhaseAssessment } from './phase_assessment.mjs';
-
 export const ASSESSMENT_SOURCES = Object.freeze({
   COACH_SELECTED: 'coach_selected',
   INHERITED_OVERALL: 'inherited_overall',
@@ -15,59 +13,52 @@ function defaultObservationQuality(qualityId) {
   return 'good';
 }
 
-function observationDefaults(observations, qualityId, source) {
+function defaultDiagnosisId(observation, observationQuality) {
+  if (observationQuality === 'not_assessed') return '';
+  return observation?.defaultDiagnosisIdByQuality?.[observationQuality]
+    || (observationQuality === 'good' ? observation?.defaultGoodDiagnosisId : '')
+    || '';
+}
+
+function observationDefault(observation, qualityId, source) {
   const observationQuality = defaultObservationQuality(qualityId);
-  return Object.fromEntries((observations || []).map((observation) => [observation.id, {
+  return {
     qualityId: observationQuality,
-    diagnosisId: observationQuality === 'good' ? observation.defaultGoodDiagnosisId || '' : '',
+    diagnosisId: defaultDiagnosisId(observation, observationQuality),
     source,
     legacyRatingId: '',
-  }]));
+  };
+}
+
+function mayBeDefaulted(assessment) {
+  return !assessment
+    || !assessment.source
+    || [
+      ASSESSMENT_SOURCES.INHERITED_OVERALL,
+      ASSESSMENT_SOURCES.DEFAULTED_OVERALL,
+      ASSESSMENT_SOURCES.INHERITED_PHASE,
+      ASSESSMENT_SOURCES.DEFAULTED_PHASE,
+    ].includes(assessment.source);
 }
 
 export function applyPhaseQualityDefault(working, phase, qualityId, qualitySource = ASSESSMENT_SOURCES.COACH_SELECTED) {
   if (!qualityId) {
-    return { ...working, qualityId: '', qualitySource: '', observations: {} };
+    return { ...working, qualityId: '', qualitySource: '', observations: { ...(working.observations || {}) } };
   }
   const inherited = qualityId === 'excellent' || qualityId === 'not_assessed';
+  const source = inherited ? ASSESSMENT_SOURCES.INHERITED_PHASE : ASSESSMENT_SOURCES.DEFAULTED_PHASE;
+  const observations = { ...(working.observations || {}) };
+  for (const observation of phase?.observations || []) {
+    if (mayBeDefaulted(observations[observation.id])) {
+      observations[observation.id] = observationDefault(observation, qualityId, source);
+    }
+  }
   return {
     ...working,
     qualityId,
     qualitySource,
-    observations: observationDefaults(
-      phase?.observations || [],
-      qualityId,
-      inherited ? ASSESSMENT_SOURCES.INHERITED_PHASE : ASSESSMENT_SOURCES.DEFAULTED_PHASE,
-    ),
+    observations,
   };
-}
-
-export function applyOverallQualityDefault(shot, phases, overallQualityId) {
-  let next = { ...shot, overall_quality_id: overallQualityId };
-  if (!overallQualityId) return next;
-
-  const phaseQuality = ['excellent', 'not_assessed'].includes(overallQualityId) ? overallQualityId : 'good';
-  const phaseSource = ['excellent', 'not_assessed'].includes(overallQualityId)
-    ? ASSESSMENT_SOURCES.INHERITED_OVERALL
-    : ASSESSMENT_SOURCES.DEFAULTED_OVERALL;
-  const observationSource = ['excellent', 'not_assessed'].includes(overallQualityId)
-    ? ASSESSMENT_SOURCES.INHERITED_OVERALL
-    : ASSESSMENT_SOURCES.DEFAULTED_OVERALL;
-
-  for (const phase of phases || []) {
-    const existing = getPhaseAssessment(next, phase.id);
-    next = setPhaseAssessment(next, phase.id, {
-      ...existing,
-      qualityId: phaseQuality,
-      qualitySource: phaseSource,
-      observations: observationDefaults(
-        phase.observations || [],
-        phaseQuality,
-        observationSource,
-      ),
-    });
-  }
-  return next;
 }
 
 export function setObservationDiagnosis(working, observationId, diagnosis, source = ASSESSMENT_SOURCES.COACH_SELECTED) {
@@ -83,9 +74,4 @@ export function setObservationDiagnosis(working, observationId, diagnosis, sourc
     };
   }
   return { ...working, observations: nextObservations };
-}
-
-export function observationsLocked(overallQualityId, phaseAssessment) {
-  return ['excellent', 'not_assessed'].includes(overallQualityId)
-    || ['excellent', 'not_assessed'].includes(phaseAssessment?.qualityId);
 }

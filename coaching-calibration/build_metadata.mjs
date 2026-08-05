@@ -24,7 +24,7 @@
  * actual `git status` reading).
  */
 const FALLBACK_BUILD_METADATA = Object.freeze({
-  version: '0.4.1',
+  version: '0.5.0',
   buildId: 'development',
   isDirty: null,
   source: 'unavailable',

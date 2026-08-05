@@ -60,11 +60,10 @@ import { getPhaseFrame } from './phase_frame_mapping.mjs';
 import { getPhaseAssessment, capturePhaseFrame, clearPhase, isPhaseCaptured } from './phase_assessment.mjs';
 import {
   ASSESSMENT_SOURCES,
-  applyOverallQualityDefault,
   applyPhaseQualityDefault,
-  observationsLocked,
   setObservationDiagnosis,
 } from './assessment_defaults.mjs';
+import { derivePhaseEvidenceRecommendation, deriveOverallAssessment } from './assessment_policy.mjs';
 import { findPhaseFrameOwner, buildFrameInUseErrorMessage } from './duplicate_frame.mjs';
 import { computeShotReadiness } from './shot_readiness.mjs';
 import { computeAnnotationCompleteness, describeAnnotationCompleteness } from './annotation_completeness.mjs';
@@ -150,14 +149,18 @@ const phaseCardEl = document.getElementById('phase-card');
 const phaseCardTitleEl = document.getElementById('phase-card-title');
 const phaseCardDescriptionEl = document.getElementById('phase-card-description');
 const phaseObservationsListEl = document.getElementById('phase-observations-list');
-const phaseObservationsInheritedEl = document.getElementById('phase-observations-inherited');
+const phaseEvidenceResultEl = document.getElementById('phase-evidence-result');
+const phaseEvidenceQualityEl = document.getElementById('phase-evidence-quality');
+const phaseEvidenceReasonEl = document.getElementById('phase-evidence-reason');
 const phaseQualityOptionsEl = document.getElementById('phase-quality-options');
 const phaseNotesEl = document.getElementById('phase-notes');
 const phaseCaptureButton = document.getElementById('phase-capture');
 const phaseClearButton = document.getElementById('phase-clear');
 
 const overallAssessmentBlockEl = document.getElementById('overall-assessment-block');
-const overallQualityOptionsEl = document.getElementById('overall-quality-options');
+const overallQualityResultEl = document.getElementById('overall-quality-result');
+const overallQualityValueEl = document.getElementById('overall-quality-value');
+const overallQualityReasonEl = document.getElementById('overall-quality-reason');
 const overallNotesEl = document.getElementById('overall-notes');
 const saveShotButton = document.getElementById('save-shot');
 
@@ -654,7 +657,16 @@ function resolveActiveProfileAndPhases(shot) {
  */
 function withCompleteness(shot) {
   const { profile, phases } = resolveActiveProfileAndPhases(shot);
-  return { ...shot, ...computeAnnotationCompleteness(shot, profile, phases) };
+  const assessedShot = profile
+    ? {
+        ...shot,
+        overall_quality_id: deriveOverallAssessment(
+          phases,
+          (phase) => getPhaseAssessment(shot, phase.id),
+        ).qualityId,
+      }
+    : shot;
+  return { ...assessedShot, ...computeAnnotationCompleteness(assessedShot, profile, phases) };
 }
 
 /** The first phase (in profile order) without both a captured frame and a quality rating, or the first phase if all are captured. */
@@ -926,7 +938,7 @@ function renderResolvedProfile(shot) {
   renderPhaseSummary(shot, phases);
   renderPhaseProgress(shot, phases);
   renderPhaseCard(shot, phases, profile);
-  renderOverallAssessment(shot, profile);
+  renderOverallAssessment(shot, phases);
 
   const readiness = computeShotReadiness(shot, profile, phases);
   const readinessText = {
@@ -1036,7 +1048,8 @@ function renderPhaseCard(shot, phases, profile) {
       nextQualityId ? ASSESSMENT_SOURCES.COACH_SELECTED : '',
     );
     renderPhaseCard(shot, phases, profile);
-  }, ['excellent', 'not_assessed'].includes(shot.overall_quality_id));
+    renderOverallAssessment(shot, phases);
+  });
 
   phaseNotesEl.value = working.notes;
 
@@ -1049,13 +1062,7 @@ function renderPhaseObservations(phase, working, shot) {
   const groups = phase.observationGroups?.length > 0
     ? phase.observationGroups
     : [{ id: '', label: '', observations: phase.observations }];
-  const locked = observationsLocked(shot.overall_quality_id, working);
-  phaseObservationsListEl.hidden = locked;
-  phaseObservationsInheritedEl.hidden = !locked;
-  if (locked) {
-    const qualityLabel = getQualityMeta(ontology, working.qualityId || shot.overall_quality_id).label;
-    phaseObservationsInheritedEl.textContent = `${qualityLabel} inherited for every observation. Change the overall or phase quality to review exceptions.`;
-  }
+  phaseObservationsListEl.hidden = false;
 
   for (const group of groups) {
     if (group.label) {
@@ -1073,7 +1080,7 @@ function renderPhaseObservations(phase, working, shot) {
     li.appendChild(label);
 
     const select = document.createElement('select');
-    select.disabled = !controlsEnabled || locked;
+    select.disabled = !controlsEnabled;
     const current = working.observations[observation.id] || { qualityId: '', diagnosisId: '', source: '', legacyRatingId: '' };
     const notAssessedOption = document.createElement('option');
     notAssessedOption.value = '__not_assessed__';
@@ -1106,6 +1113,21 @@ function renderPhaseObservations(phase, working, shot) {
     phaseObservationsListEl.appendChild(li);
     }
   }
+  renderPhaseEvidenceRecommendation(phase, phaseWorking[phase.id] || working);
+}
+
+function renderPhaseEvidenceRecommendation(phase, assessment) {
+  const result = derivePhaseEvidenceRecommendation(assessment, phase);
+  phaseEvidenceResultEl.dataset.policyVersion = result.policyVersion;
+  phaseEvidenceQualityEl.textContent = getQualityMeta(ontology, result.qualityId).label;
+  if (result.assessedCount === 0) {
+    phaseEvidenceReasonEl.textContent = 'Set an observation explicitly to generate a recommendation.';
+    return;
+  }
+  const labels = new Map(phase.observations.map((observation) => [observation.id, observation.label]));
+  const drivers = result.driverObservationIds.map((id) => labels.get(id) || id).join(', ');
+  const coverage = result.complete ? 'All observations reviewed.' : `${result.assessedCount} of ${result.totalCount} observations reviewed.`;
+  phaseEvidenceReasonEl.textContent = `Driven by ${drivers}. ${coverage}`;
 }
 
 /** Renders a toggle-button group (Phase Quality or Overall Quality): re-clicking the selected option deselects it. */
@@ -1122,18 +1144,24 @@ function renderQualityGroup(container, options, selectedId, onSelect, disabled =
   }
 }
 
-/** Overall Quality only -- General Notes (shot.notes) is rendered unconditionally in renderShotDetail, since it must remain editable without a resolved profile. */
-function renderOverallAssessment(shot, profile) {
-  const qualityOptions = buildQualityOptions(profile, ontology);
-  renderQualityGroup(overallQualityOptionsEl, qualityOptions, shot.overall_quality_id, (qualityId) => {
-    const nextValue = shot.overall_quality_id === qualityId ? '' : qualityId;
-    const { phases } = resolveActiveProfileAndPhases(shot);
-    mutateSelectedShot((candidate) => {
-      const updated = applyOverallQualityDefault(candidate, phases, nextValue);
-      phaseWorking = Object.fromEntries(phases.map((phase) => [phase.id, getPhaseAssessment(updated, phase.id)]));
-      return updated;
-    });
-  });
+/** Overall Quality is reporting-only; General Notes remains the coach-authored shot-level input. */
+function renderOverallAssessment(shot, phases) {
+  const result = deriveOverallAssessment(
+    phases,
+    (phase) => phaseWorking[phase.id] || getPhaseAssessment(shot, phase.id),
+  );
+  overallQualityResultEl.dataset.policyVersion = result.policyVersion;
+  overallQualityValueEl.textContent = getQualityMeta(ontology, result.qualityId).label;
+  const phaseLabels = new Map(phases.map((phase) => [phase.id, phase.label]));
+  if (result.driverPhaseIds.length === 0) {
+    overallQualityReasonEl.textContent = 'Assess the phases to calculate an overall result.';
+    return;
+  }
+  const drivers = result.driverPhaseIds.map((id) => phaseLabels.get(id) || id).join(', ');
+  const missing = result.missingPhaseIds.map((id) => phaseLabels.get(id) || id).join(', ');
+  overallQualityReasonEl.textContent = result.complete
+    ? `Driven by ${drivers}.`
+    : `Driven by ${drivers}; provisional while ${missing} ${result.missingPhaseIds.length === 1 ? 'is' : 'are'} Not Assessed.`;
 }
 
 function handleCapturePhase() {
@@ -1624,7 +1652,7 @@ document.addEventListener('keydown', (event) => {
 
 /**
  * Concise, restrained build provenance next to the app title (e.g.
- * "v0.4.1 · build a1b2c3d", or "v0.4.1 · development build" for a
+ * "v0.5.0 · build a1b2c3d", or "v0.5.0 · development build" for a
  * genuinely modified local source tree), read entirely from the generated
  * build_metadata.mjs -- never hardcoded or fabricated here. The raw word
  * "dirty" is never shown to the coach; BUILD_METADATA.isDirty only changes

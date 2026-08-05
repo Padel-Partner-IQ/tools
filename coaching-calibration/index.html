@@ -93,8 +93,12 @@
 
                 <div id="phase-observations-block" class="assessment-block">
                   <h5>Observations</h5>
-                  <p id="phase-observations-inherited" class="inherited-summary" hidden></p>
                   <ul id="phase-observations-list" class="observations-list"></ul>
+                  <div id="phase-evidence-result" class="derived-assessment" role="status">
+                    <span class="derived-assessment-label">Observation evidence suggests</span>
+                    <strong id="phase-evidence-quality">Not Assessed</strong>
+                    <p id="phase-evidence-reason"></p>
+                  </div>
                 </div>
 
                 <label class="field">
@@ -121,8 +125,11 @@
 
               <div id="overall-assessment-block" class="assessment-block" hidden>
                 <h4>Overall Assessment</h4>
-                <h5>Overall Quality</h5>
-                <div id="overall-quality-options" class="quality-options" role="radiogroup" aria-label="Overall quality"></div>
+                <h5>Calculated Overall Quality</h5>
+                <div id="overall-quality-result" class="derived-assessment" role="status">
+                  <strong id="overall-quality-value">Not Assessed</strong>
+                  <p id="overall-quality-reason"></p>
+                </div>
               </div>
 
               <h3>Shot Detail</h3>
