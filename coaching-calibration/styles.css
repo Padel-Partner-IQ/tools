@@ -228,6 +228,11 @@ textarea, select, input { border-radius: 10px; border: 1px solid #4b5563; paddin
 .runtime-frame-button { padding: 8px; border: 1px solid #475569; border-radius: 8px; background: #172033; color: #e2e8f0; text-align: left; }
 .runtime-frame-delta { grid-column: 1 / -1; color: #fbbf24; font-weight: 600; font-size: 0.82rem; }
 .runtime-phase-status { margin: 8px 0; color: #cbd5e1; font-size: 0.8rem; }
+.runtime-disagreement { margin: 10px 0; padding: 10px; border-left: 3px solid #f59e0b; border-radius: 0 8px 8px 0; background: rgba(245, 158, 11, 0.09); }
+.runtime-disagreement[hidden] { display: none; }
+.runtime-disagreement strong { color: #fde68a; font-size: 0.82rem; }
+.runtime-disagreement p { margin: 5px 0; color: #e2e8f0; font-size: 0.76rem; line-height: 1.4; }
+.runtime-disagreement ul { margin: 6px 0 0; padding-left: 18px; color: #cbd5e1; font-size: 0.72rem; }
 .runtime-details { border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px; margin-top: 8px; }
 .runtime-details summary { cursor: pointer; color: #bfdbfe; font-size: 0.8rem; font-weight: 600; }
 .runtime-candidate, .runtime-metric { margin-top: 8px; padding: 8px; background: rgba(15, 23, 42, 0.65); border-radius: 8px; }

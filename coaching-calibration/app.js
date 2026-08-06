@@ -166,6 +166,10 @@ const seekCoachFrameButton = document.getElementById('seek-coach-frame');
 const seekRuntimeFrameButton = document.getElementById('seek-runtime-frame');
 const runtimeFrameDeltaEl = document.getElementById('runtime-frame-delta');
 const runtimePhaseStatusEl = document.getElementById('runtime-phase-status');
+const runtimeDisagreementEl = document.getElementById('runtime-disagreement');
+const runtimeDisagreementHeadlineEl = document.getElementById('runtime-disagreement-headline');
+const runtimeDisagreementSummaryEl = document.getElementById('runtime-disagreement-summary');
+const runtimeDisagreementEvidenceEl = document.getElementById('runtime-disagreement-evidence');
 const runtimeCandidatesEl = document.getElementById('runtime-candidates');
 const runtimeCandidatesBodyEl = document.getElementById('runtime-candidates-body');
 const runtimeMetricsEl = document.getElementById('runtime-metrics');
@@ -1240,6 +1244,17 @@ function renderRuntimeReview(shot, phase) {
   runtimePhaseStatusEl.textContent = review?.unavailable_reason
     || [review?.uncertainty && `Uncertainty: ${humanise(review.uncertainty)}`, Number.isFinite(review?.confidence) && `Confidence: ${review.confidence.toFixed(3)}`].filter(Boolean).join(' · ')
     || 'No phase evidence was packaged.';
+
+  const disagreement = review?.disagreement;
+  runtimeDisagreementEl.hidden = !disagreement;
+  runtimeDisagreementHeadlineEl.textContent = disagreement?.headline || '';
+  runtimeDisagreementSummaryEl.textContent = disagreement?.summary || '';
+  runtimeDisagreementEvidenceEl.innerHTML = '';
+  for (const point of disagreement?.evidence_points || []) {
+    const item = document.createElement('li');
+    item.textContent = point;
+    runtimeDisagreementEvidenceEl.appendChild(item);
+  }
 
   runtimeCandidatesBodyEl.innerHTML = '';
   const selected = review?.selected_evidence || [];
