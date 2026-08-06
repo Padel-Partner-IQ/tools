@@ -216,6 +216,40 @@ textarea, select, input { border-radius: 10px; border: 1px solid #4b5563; paddin
 .observation-row .observation-label { flex: 1; }
 .observation-row select { min-width: 160px; }
 
+/* Runtime evidence is read-only context beside the coach's editable phase. */
+.runtime-review { margin: 12px 0 16px; padding: 12px; border: 1px solid #3b82f6; border-radius: 10px; background: rgba(30, 64, 175, 0.10); }
+.runtime-review[hidden] { display: none; }
+.runtime-review-heading { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.runtime-review-heading h5 { margin: 0; color: #bfdbfe; }
+.runtime-handedness { color: #93c5fd; font-size: 0.75rem; }
+.runtime-vocabulary { margin: 5px 0 0; color: #86efac; font-size: 0.72rem; }
+.runtime-vocabulary.stale { color: #fbbf24; font-weight: 600; }
+.runtime-frame-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.runtime-frame-button { padding: 8px; border: 1px solid #475569; border-radius: 8px; background: #172033; color: #e2e8f0; text-align: left; }
+.runtime-frame-delta { grid-column: 1 / -1; color: #fbbf24; font-weight: 600; font-size: 0.82rem; }
+.runtime-phase-status { margin: 8px 0; color: #cbd5e1; font-size: 0.8rem; }
+.runtime-details { border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px; margin-top: 8px; }
+.runtime-details summary { cursor: pointer; color: #bfdbfe; font-size: 0.8rem; font-weight: 600; }
+.runtime-candidate, .runtime-metric { margin-top: 8px; padding: 8px; background: rgba(15, 23, 42, 0.65); border-radius: 8px; }
+.runtime-candidate-heading { color: #e2e8f0; font-size: 0.8rem; font-weight: 600; }
+.runtime-seek-link { margin: 5px 0; padding: 3px 8px; border: 1px solid #475569; border-radius: 999px; background: transparent; color: #93c5fd; font-size: 0.72rem; }
+.runtime-support-badge { display: block; margin: 3px 0 6px; color: #93c5fd; font-size: 0.7rem; }
+.runtime-coach-summary { margin: 4px 0 7px; color: #cbd5e1; font-size: 0.76rem; line-height: 1.35; }
+.runtime-evidence-comparison { margin: 10px 0; padding: 10px; border-left: 3px solid #4385ff; background: rgba(67, 133, 255, 0.08); border-radius: 0 8px 8px 0; }
+.runtime-evidence-comparison > strong { display: block; margin-bottom: 8px; color: #dbeafe; font-size: 0.82rem; }
+.runtime-measurement-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 7px; }
+.runtime-measurement-label { grid-column: 1 / -1; color: #bfdbfe; font-size: 0.72rem; font-weight: 600; }
+.runtime-comparison-value { display: flex; flex-direction: column; gap: 2px; padding: 8px; border: 1px solid rgba(148, 163, 184, 0.22); border-radius: 7px; background: rgba(15, 23, 42, 0.6); }
+.runtime-comparison-value span { color: #94a3b8; font-size: 0.68rem; }
+.runtime-comparison-value strong { color: #f8fafc; font-size: 1rem; }
+.runtime-comparison-value small { color: #cbd5e1; font-size: 0.65rem; }
+.runtime-technical-disclosure { opacity: 0.85; }
+.runtime-metric-explanation, .runtime-metric-technical { margin-top: 7px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.08); }
+.runtime-metric-explanation summary, .runtime-metric-technical summary { cursor: pointer; color: #93c5fd; font-size: 0.72rem; }
+.runtime-evidence-line { display: grid; grid-template-columns: minmax(110px, 0.8fr) 1.2fr; gap: 8px; margin-top: 4px; font-size: 0.72rem; }
+.runtime-evidence-line span { color: #94a3b8; }
+.runtime-evidence-line strong { color: #cbd5e1; font-weight: 500; overflow-wrap: anywhere; }
+
 /* ------------------------------------------------------- Progress list (phase progress) */
 
 .progress-list { list-style: none; margin: 0 0 8px; padding: 0; }

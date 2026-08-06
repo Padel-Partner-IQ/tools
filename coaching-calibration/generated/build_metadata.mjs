@@ -9,9 +9,9 @@
 // docs/tooling/annotation-workbench-development.md#build-metadata.
 
 export const BUILD_METADATA = Object.freeze({
-  version: "0.5.0",
-  buildId: "5cb0923",
+  version: "0.7.1",
+  buildId: "e8a9369",
   isDirty: false,
   source: "git",
-  generatedAt: "2026-08-06T11:16:14.500Z",
+  generatedAt: "2026-08-06T13:44:21.824Z",
 });

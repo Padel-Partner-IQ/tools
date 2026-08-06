@@ -41,8 +41,10 @@
             <section class="card open-controls">
               <input id="video-file" type="file" accept="video/*" hidden />
               <input id="csv-file" type="file" accept=".csv,text/csv" hidden />
+              <input id="review-pack-file" type="file" accept=".json,application/json" hidden />
               <button id="open-video" class="btn-primary">Open Video</button>
               <button id="open-csv" class="btn-primary">Open Annotation CSV...</button>
+              <button id="open-review-pack" class="btn-primary">Open Review Pack...</button>
             </section>
 
             <section class="card shots-nav-card">
@@ -85,6 +87,28 @@
               <div id="phase-card" class="phase-card" hidden>
                 <h4 id="phase-card-title" class="phase-name"></h4>
                 <p id="phase-card-description" class="phase-description"></p>
+
+                <section id="runtime-review" class="runtime-review" hidden>
+                  <div class="runtime-review-heading">
+                    <h5>Runtime comparison</h5>
+                    <span id="runtime-handedness" class="runtime-handedness"></span>
+                  </div>
+                  <p id="runtime-vocabulary" class="runtime-vocabulary"></p>
+                  <div class="runtime-frame-comparison">
+                    <button id="seek-coach-frame" type="button" class="runtime-frame-button"></button>
+                    <button id="seek-runtime-frame" type="button" class="runtime-frame-button"></button>
+                    <span id="runtime-frame-delta" class="runtime-frame-delta"></span>
+                  </div>
+                  <p id="runtime-phase-status" class="runtime-phase-status"></p>
+                  <details id="runtime-candidates" class="runtime-details runtime-technical-disclosure">
+                    <summary>How the engine selected its frame</summary>
+                    <div id="runtime-candidates-body"></div>
+                  </details>
+                  <details id="runtime-metrics" class="runtime-details" open>
+                    <summary>Coach–runtime evidence comparison</summary>
+                    <div id="runtime-metrics-body"></div>
+                  </details>
+                </section>
 
                 <div class="assessment-block">
                   <h5>Phase Quality</h5>

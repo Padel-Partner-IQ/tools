@@ -69,6 +69,7 @@ import { computeShotReadiness } from './shot_readiness.mjs';
 import { computeAnnotationCompleteness, describeAnnotationCompleteness } from './annotation_completeness.mjs';
 import { BUILD_METADATA } from './build_metadata.mjs';
 import { buildAnnotationExportFilename, classifyAnnotationArtifact } from './artifact_filename.mjs';
+import { parseReviewPack, phaseReviewFor, reviewShotFor, frameDelta, reviewVocabularyStatus, primaryEvidenceComparison } from './review_pack.mjs';
 
 const environment = createEnvironment(window);
 
@@ -87,8 +88,10 @@ const buildProvenanceEl = document.getElementById('build-provenance');
 const video = document.getElementById('video');
 const videoFileInput = document.getElementById('video-file');
 const csvFileInput = document.getElementById('csv-file');
+const reviewPackFileInput = document.getElementById('review-pack-file');
 const openVideoButton = document.getElementById('open-video');
 const openCsvButton = document.getElementById('open-csv');
+const openReviewPackButton = document.getElementById('open-review-pack');
 const videoNameEl = document.getElementById('video-name');
 const videoFrameRateEl = document.getElementById('video-frame-rate');
 const videoLoadStatusEl = document.getElementById('video-load-status');
@@ -156,6 +159,17 @@ const phaseQualityOptionsEl = document.getElementById('phase-quality-options');
 const phaseNotesEl = document.getElementById('phase-notes');
 const phaseCaptureButton = document.getElementById('phase-capture');
 const phaseClearButton = document.getElementById('phase-clear');
+const runtimeReviewEl = document.getElementById('runtime-review');
+const runtimeHandednessEl = document.getElementById('runtime-handedness');
+const runtimeVocabularyEl = document.getElementById('runtime-vocabulary');
+const seekCoachFrameButton = document.getElementById('seek-coach-frame');
+const seekRuntimeFrameButton = document.getElementById('seek-runtime-frame');
+const runtimeFrameDeltaEl = document.getElementById('runtime-frame-delta');
+const runtimePhaseStatusEl = document.getElementById('runtime-phase-status');
+const runtimeCandidatesEl = document.getElementById('runtime-candidates');
+const runtimeCandidatesBodyEl = document.getElementById('runtime-candidates-body');
+const runtimeMetricsEl = document.getElementById('runtime-metrics');
+const runtimeMetricsBodyEl = document.getElementById('runtime-metrics-body');
 
 const overallAssessmentBlockEl = document.getElementById('overall-assessment-block');
 const overallQualityResultEl = document.getElementById('overall-quality-result');
@@ -196,6 +210,16 @@ let profileIndex = new Map(); // classification-id key -> normalized coaching pr
 let ontology = null; // normalized Coaching Ontology, loaded once at startup -- label/description lookups for phases/observations/ratings/quality
 let activePhaseId = null; // the currently selected shot's active phase in the phase editor
 let phaseWorking = {}; // phaseId -> { qualityId, notes, observations } draft for the currently selected shot's active phase(s)
+let reviewPack = null; // optional, read-only runtime evidence joined explicitly to coach shot ids
+
+function setReviewPack(pack) {
+  reviewPack = pack;
+  const active = Boolean(pack);
+  openCsvButton.disabled = active;
+  openCsvButton.title = active
+    ? 'This Review Pack already includes its annotation CSV.'
+    : '';
+}
 
 // ---------------------------------------------------------------------------
 // Frame/time conversion -- always from the canonical annotation-session
@@ -239,6 +263,11 @@ function seekToFrame(frame) {
 // ---------------------------------------------------------------------------
 
 function resetSessionForNewVideo() {
+  // A CSV/Review Pack deliberately opened before its video remains pending
+  // across the video-load reset so it can be identity-checked as soon as the
+  // hash is known. An already-reconciled session is cleared for a genuinely
+  // new video, including any now-stale runtime Review Pack evidence.
+  const csvAwaitingVideo = pendingCsvText;
   shots = [];
   selectedShotId = null;
   realVideoMeta = null;
@@ -246,8 +275,9 @@ function resetSessionForNewVideo() {
   annotationFrameRateProvider = null;
   annotationFrameCount = null;
   runMetadata = null;
-  pendingCsvText = null;
-  csvLoaded = false;
+  pendingCsvText = csvAwaitingVideo;
+  csvLoaded = Boolean(csvAwaitingVideo);
+  if (!csvAwaitingVideo) setReviewPack(null);
   controlsEnabled = false;
   hideCsvError();
 }
@@ -495,14 +525,38 @@ function openCsv() {
   csvFileInput.click();
 }
 
-function loadCsvText(text) {
+function openReviewPack() {
+  reviewPackFileInput.click();
+}
+
+function loadReviewPackText(text) {
+  let parsedPack;
+  try {
+    parsedPack = parseReviewPack(text);
+  } catch (error) {
+    showCsvError(describeEnvironmentError(error));
+    return;
+  }
+  setReviewPack(parsedPack);
+  const loaded = loadCsvText(reviewPack.coach_annotation_csv_text, { keepReviewPack: true });
+  if (loaded && reviewPack) {
+    const matched = reviewPack.shots.filter((shot) => shot.match_status !== 'unmatched').length;
+    const videoPrompt = realVideoMeta ? '' : ` Open the matching video: ${reviewPack.video?.video_filename || 'the video identified by this pack'}.`;
+    showFeedback(`Review Pack loaded: ${matched} of ${reviewPack.shots.length} coach shots have runtime evidence.${videoPrompt}`, 'success');
+  } else if (!loaded) {
+    setReviewPack(null);
+  }
+}
+
+function loadCsvText(text, { keepReviewPack = false } = {}) {
+  if (!keepReviewPack) setReviewPack(null);
   let rows;
   try {
     rows = parseAnnotationCsv(text);
     validateAnnotationRows(rows);
   } catch (error) {
     showCsvError(error instanceof AnnotationValidationError ? error.errors.join('\n') : describeEnvironmentError(error));
-    return;
+    return false;
   }
 
   if (!realVideoMeta) {
@@ -521,10 +575,10 @@ function loadCsvText(text) {
     updateSessionMeta();
     renderShotsStrip();
     renderShotDetail();
-    return;
+    return true;
   }
 
-  applyCsvRows(rows);
+  return applyCsvRows(rows);
 }
 
 function applyCsvRows(rows) {
@@ -533,14 +587,14 @@ function applyCsvRows(rows) {
     csvMeta = extractCsvVideoMetadata(rows);
   } catch (error) {
     showCsvError(describeEnvironmentError(error));
-    return;
+    return false;
   }
 
   if (csvMeta) {
     const comparison = compareVideoIdentity(csvMeta, realVideoMeta);
     if (comparison === 'conflicting_identity' || comparison === 'conflicting_frame_rate' || comparison === 'conflicting_hash') {
       showCsvError(buildMismatchMessage(comparison, csvMeta, realVideoMeta));
-      return;
+      return false;
     }
     if (comparison === 'harmless_difference') {
       showFeedback(`This CSV's own video_filename ("${csvMeta.video_filename}") differs from the open video's filename, but their video_id and frame rate agree -- continuing.`, 'info');
@@ -569,13 +623,15 @@ function applyCsvRows(rows) {
   renderShotsStrip();
   renderShotDetail();
   updateExportState();
+  return true;
 }
 
 function reconcilePendingCsv() {
   if (!pendingCsvText) return;
   const text = pendingCsvText;
   pendingCsvText = null;
-  loadCsvText(text);
+  const loaded = loadCsvText(text, { keepReviewPack: Boolean(reviewPack) });
+  if (!loaded) setReviewPack(null);
 }
 
 function buildMismatchMessage(comparison, csvMeta, realMeta) {
@@ -1032,6 +1088,7 @@ function renderPhaseCard(shot, phases, profile) {
   phaseCardTitleEl.textContent = phase.label;
   phaseCardDescriptionEl.textContent = phase.description || '';
   phaseCardDescriptionEl.hidden = !phase.description;
+  renderRuntimeReview(shot, phase);
 
   const working = phaseWorking[phase.id] || getPhaseAssessment(shot, phase.id);
   phaseWorking[phase.id] = working;
@@ -1055,6 +1112,260 @@ function renderPhaseCard(shot, phases, profile) {
 
   phaseCaptureButton.disabled = !controlsEnabled || currentFrame === null;
   phaseClearButton.disabled = !controlsEnabled || !phaseHasAnyData(shot, phase.id);
+}
+
+function humanise(value) {
+  return String(value ?? '').replaceAll('_', ' ').replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function formatEvidenceValue(value) {
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+  if (value === null || value === undefined || value === '') return '—';
+  return typeof value === 'object' ? Object.entries(value).map(([key, item]) => `${humanise(key)}: ${formatEvidenceValue(item)}`).join(' · ') : String(value);
+}
+
+function evidenceLine(label, value) {
+  const row = document.createElement('div');
+  row.className = 'runtime-evidence-line';
+  const name = document.createElement('span');
+  name.textContent = label;
+  const result = document.createElement('strong');
+  result.textContent = formatEvidenceValue(value);
+  row.append(name, result);
+  return row;
+}
+
+function reliabilityLabel(value) {
+  if (!Number.isFinite(value)) return 'Unavailable';
+  if (value >= 0.75) return 'High';
+  if (value >= 0.6) return 'Moderate';
+  return 'Low';
+}
+
+function conciseEvidenceLabel(metricId) {
+  const aliases = {
+    hitting_arm_extension_ratio: 'Arm extension',
+    non_hitting_arm_extension_ratio: 'Non-hitting arm extension',
+    hitting_elbow_joint_angle_deg: 'Elbow angle',
+    shoulder_hip_separation_deg: 'Shoulder–hip separation',
+    shoulder_line_orientation_image_plane_deg: 'Shoulder orientation',
+    torso_orientation_image_plane_deg: 'Torso orientation',
+  };
+  if (aliases[metricId]) return aliases[metricId];
+  return humanise(metricId)
+    .replace(/^(Left|Right) /, '')
+    .replace(/ Body /, ' ')
+    .replace(/ Image Plane Deg$/, '')
+    .replace(/ Torso Normalised$/, '')
+    .replace(/ Joint Angle Deg$/, ' angle')
+    .replace(/ Deg$/, '')
+    .replace(/ Ratio$/, '');
+}
+
+function formatCoachEvidenceValue(measurement) {
+  if (measurement?.evidence_status !== 'available' || !Number.isFinite(measurement.representative_value)) {
+    return 'No available evidence';
+  }
+  const value = measurement.representative_value;
+  const metricId = measurement.geometry_metric_id || '';
+  if (metricId.endsWith('_deg')) return `${value.toFixed(1)}°`;
+  if (metricId.endsWith('_px')) return `${value.toFixed(1)} px`;
+  return value.toFixed(2);
+}
+
+function supportPresentation(observation) {
+  const support = observation.declared_support || observation.support;
+  if (support === 'contract_gap') {
+    return { label: 'Measurement gap', summary: 'The rubric observation is known, but the engine does not yet have a validated measurement for it.' };
+  }
+  if (observation.evidence_status === 'insufficient_evidence') {
+    return { label: 'Insufficient evidence', summary: 'The engine could not obtain enough reliable evidence for this observation at this phase.' };
+  }
+  if (support === 'direct_2d') {
+    return { label: 'Measured in 2D', summary: 'The engine measured visible body geometry that directly describes this observation in the image plane.' };
+  }
+  if (support === 'proxy') {
+    return { label: 'Proxy evidence', summary: 'The engine measured related visible geometry, but not the complete coaching concept.' };
+  }
+  return { label: 'Unavailable', summary: 'No suitable snapshot measurement is currently available.' };
+}
+
+function candidateCard(candidate, index, label) {
+  const card = document.createElement('div');
+  card.className = 'runtime-candidate';
+  const heading = document.createElement('div');
+  heading.className = 'runtime-candidate-heading';
+  heading.textContent = `${label} ${index + 1} · frame ${candidate.frame_index ?? '—'}${Number.isFinite(candidate.confidence) ? ` · confidence ${candidate.confidence.toFixed(3)}` : ''}`;
+  card.appendChild(heading);
+  if (Number.isFinite(candidate.frame_index)) {
+    const seek = document.createElement('button');
+    seek.type = 'button';
+    seek.className = 'runtime-seek-link';
+    seek.textContent = 'View frame';
+    seek.addEventListener('click', () => seekToFrame(candidate.frame_index));
+    card.appendChild(seek);
+  }
+  if (candidate.reason) card.appendChild(evidenceLine('Reason', candidate.reason));
+  if (candidate.measurements) card.appendChild(evidenceLine('Measurements', candidate.measurements));
+  if (candidate.score_components) card.appendChild(evidenceLine('Score components', candidate.score_components));
+  return card;
+}
+
+function renderRuntimeReview(shot, phase) {
+  const reviewShot = reviewShotFor(reviewPack, shot.shot_id);
+  const review = phaseReviewFor(reviewPack, shot.shot_id, phase.id);
+  runtimeReviewEl.hidden = !reviewShot;
+  if (!reviewShot) return;
+
+  const handedness = reviewShot.classification?.hitting_hand;
+  runtimeHandednessEl.textContent = handedness ? `${humanise(handedness)}-handed interpretation` : 'Hitting hand unavailable';
+  const vocabulary = reviewVocabularyStatus(reviewPack);
+  runtimeVocabularyEl.textContent = vocabulary.current
+    ? `Current rubric evidence vocabulary · contract ${vocabulary.contractVersion} · mapping ${vocabulary.mappingVersion}`
+    : `Older rubric evidence vocabulary · contract ${vocabulary.contractVersion || 'unknown'} · mapping ${vocabulary.mappingVersion || 'unknown'}`;
+  runtimeVocabularyEl.classList.toggle('stale', !vocabulary.current);
+  const coachFrame = getPhaseFrame(shot, phase.id);
+  const automatedFrame = review?.automated_frame ?? null;
+  seekCoachFrameButton.textContent = `Coach frame: ${coachFrame ?? 'Not captured'}`;
+  seekCoachFrameButton.disabled = !Number.isFinite(coachFrame) || !controlsEnabled;
+  seekCoachFrameButton.onclick = () => seekToFrame(coachFrame);
+  seekRuntimeFrameButton.textContent = `Runtime frame: ${automatedFrame ?? 'Unavailable'}`;
+  seekRuntimeFrameButton.disabled = !Number.isFinite(automatedFrame) || !controlsEnabled;
+  seekRuntimeFrameButton.onclick = () => seekToFrame(automatedFrame);
+
+  const delta = frameDelta(coachFrame, automatedFrame, annotationFrameRateFps);
+  runtimeFrameDeltaEl.textContent = delta
+    ? `Runtime ${delta.frames >= 0 ? '+' : ''}${delta.frames} frames${Number.isFinite(delta.milliseconds) ? ` (${delta.milliseconds >= 0 ? '+' : ''}${delta.milliseconds.toFixed(0)} ms)` : ''}`
+    : 'Difference unavailable';
+  runtimePhaseStatusEl.textContent = review?.unavailable_reason
+    || [review?.uncertainty && `Uncertainty: ${humanise(review.uncertainty)}`, Number.isFinite(review?.confidence) && `Confidence: ${review.confidence.toFixed(3)}`].filter(Boolean).join(' · ')
+    || 'No phase evidence was packaged.';
+
+  runtimeCandidatesBodyEl.innerHTML = '';
+  const selected = review?.selected_evidence || [];
+  const alternatives = review?.alternatives || [];
+  selected.forEach((candidate, index) => runtimeCandidatesBodyEl.appendChild(candidateCard(candidate, index, 'Selected evidence')));
+  alternatives.forEach((candidate, index) => runtimeCandidatesBodyEl.appendChild(candidateCard(candidate, index, 'Alternative')));
+  if (selected.length === 0 && alternatives.length === 0) {
+    runtimeCandidatesBodyEl.appendChild(evidenceLine('Evidence', review?.unavailable_reason || 'No ranked candidates supplied'));
+  }
+  runtimeCandidatesEl.hidden = selected.length === 0 && alternatives.length === 0 && !review?.unavailable_reason;
+
+  runtimeMetricsBodyEl.innerHTML = '';
+  const runtimeObservations = review?.observations || [];
+  const coachEvidence = review?.coach_frame_evidence || null;
+  const coachObservations = new Map(
+    (coachEvidence?.observations || []).map((observation) => [observation.metric_id, observation]),
+  );
+  const observations = [...runtimeObservations];
+  for (const coachObservation of coachObservations.values()) {
+    if (!observations.some((observation) => observation.metric_id === coachObservation.metric_id)) {
+      observations.push(coachObservation);
+    }
+  }
+  for (const observation of observations) {
+    const runtimeObservation = runtimeObservations.find((candidate) => candidate.metric_id === observation.metric_id);
+    const card = document.createElement('div');
+    card.className = 'runtime-metric';
+    const presentation = supportPresentation(observation);
+    const title = document.createElement('strong');
+    title.textContent = humanise(observation.metric_id);
+    const badge = document.createElement('span');
+    badge.className = 'runtime-support-badge';
+    badge.textContent = presentation.label;
+    card.append(title, badge);
+
+    const summary = document.createElement('p');
+    summary.className = 'runtime-coach-summary';
+    summary.textContent = presentation.summary;
+    card.appendChild(summary);
+
+    const coachObservation = coachObservations.get(observation.metric_id);
+    if (coachEvidence) {
+      const comparison = document.createElement('div');
+      comparison.className = 'runtime-evidence-comparison';
+      const comparisonHeading = document.createElement('strong');
+      comparisonHeading.textContent = 'Runtime versus coach';
+      comparison.appendChild(comparisonHeading);
+      const comparisons = primaryEvidenceComparison(runtimeObservation, coachObservation);
+      if (comparisons.length === 0) {
+        comparison.appendChild(evidenceLine('Comparison', 'No primary measurement is currently defined'));
+      }
+      for (const { geometryMetricId, runtime: runtimeMeasurement, coach: coachMeasurement } of comparisons) {
+        const measurementGroup = document.createElement('div');
+        measurementGroup.className = 'runtime-measurement-comparison';
+        if (comparisons.length > 1) {
+          const measurementLabel = document.createElement('span');
+          measurementLabel.className = 'runtime-measurement-label';
+          measurementLabel.textContent = conciseEvidenceLabel(geometryMetricId);
+          measurementGroup.appendChild(measurementLabel);
+        }
+        for (const [frameLabel, frameIndex, measurement] of [
+          ['Runtime', automatedFrame, runtimeMeasurement],
+          ['Coach', coachEvidence.frame_index, coachMeasurement],
+        ]) {
+          const valueCard = document.createElement('div');
+          valueCard.className = 'runtime-comparison-value';
+          const label = document.createElement('span');
+          label.textContent = `${frameLabel} · frame ${frameIndex ?? '—'}`;
+          const value = document.createElement('strong');
+          value.textContent = formatCoachEvidenceValue(measurement);
+          const reliability = document.createElement('small');
+          reliability.textContent = `${reliabilityLabel(measurement?.reliability)} reliability`;
+          valueCard.append(label, value, reliability);
+          measurementGroup.appendChild(valueCard);
+        }
+        comparison.appendChild(measurementGroup);
+      }
+      card.appendChild(comparison);
+    }
+
+    const primaryMeasurements = coachEvidence
+      ? []
+      : (observation.measurements || []).filter((measurement) => measurement.evidence_role === 'primary' && measurement.evidence_status === 'available');
+    for (const measurement of primaryMeasurements) {
+      const value = `${formatEvidenceValue(measurement.representative_value)} · ${reliabilityLabel(measurement.reliability)} reliability`;
+      card.appendChild(evidenceLine(humanise(measurement.geometry_metric_id), value));
+    }
+
+    const explanation = document.createElement('details');
+    explanation.className = 'runtime-metric-explanation';
+    const explanationSummary = document.createElement('summary');
+    explanationSummary.textContent = 'What this means';
+    explanation.appendChild(explanationSummary);
+    if (observation.limitation) explanation.appendChild(evidenceLine('Limitation', observation.limitation));
+    for (const candidate of observation.candidate_measurements || []) {
+      explanation.appendChild(evidenceLine('Useful future evidence', candidate.description));
+    }
+    card.appendChild(explanation);
+
+    const technical = document.createElement('details');
+    technical.className = 'runtime-metric-technical';
+    const technicalSummary = document.createElement('summary');
+    technicalSummary.textContent = 'Technical details';
+    technical.appendChild(technicalSummary);
+    technical.appendChild(evidenceLine('Mapping support', observation.declared_support || observation.support));
+    if (coachEvidence) {
+      technical.appendChild(evidenceLine(
+        'Coach-frame evaluation window',
+        `frames ${coachEvidence.window_start_frame}–${coachEvidence.window_end_frame} · ${humanise(coachEvidence.window_basis)} · offline evaluation only`,
+      ));
+    }
+    for (const measurement of runtimeObservation?.measurements || []) {
+      const description = `${measurement.geometry_metric_id} (runtime frame; ${measurement.evidence_role})`;
+      const value = `value ${formatEvidenceValue(measurement.representative_value)} · range ${formatEvidenceValue(measurement.minimum)}–${formatEvidenceValue(measurement.maximum)} · reliability ${formatEvidenceValue(measurement.reliability)} · ${measurement.available_frames ?? 0}/${measurement.window_frames ?? 0} frames`;
+      technical.appendChild(evidenceLine(description, value));
+    }
+    for (const measurement of coachObservation?.measurements || []) {
+      const description = `${measurement.geometry_metric_id} (coach frame; ${measurement.evidence_role})`;
+      const value = `value ${formatEvidenceValue(measurement.representative_value)} · range ${formatEvidenceValue(measurement.minimum)}–${formatEvidenceValue(measurement.maximum)} · reliability ${formatEvidenceValue(measurement.reliability)} · ${measurement.available_frames ?? 0}/${measurement.window_frames ?? 0} frames`;
+      technical.appendChild(evidenceLine(description, value));
+    }
+    card.appendChild(technical);
+    runtimeMetricsBodyEl.appendChild(card);
+  }
+  if (observations.length === 0) runtimeMetricsBodyEl.appendChild(evidenceLine('Metrics', 'No observation metrics supplied for this phase'));
+  runtimeMetricsEl.hidden = false;
 }
 
 function renderPhaseObservations(phase, working, shot) {
@@ -1567,6 +1878,7 @@ async function exportAnnotationCsv() {
 
 openVideoButton.addEventListener('click', () => openVideo());
 openCsvButton.addEventListener('click', () => openCsv());
+openReviewPackButton.addEventListener('click', () => openReviewPack());
 
 videoFileInput.addEventListener('change', async (event) => {
   const file = event.target.files?.[0];
@@ -1581,6 +1893,13 @@ csvFileInput.addEventListener('change', async (event) => {
   const text = await file.text();
   loadCsvText(text);
   csvFileInput.value = '';
+});
+
+reviewPackFileInput.addEventListener('change', async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  loadReviewPackText(await file.text());
+  reviewPackFileInput.value = '';
 });
 
 prevFrameButton.addEventListener('click', () => stepFrame(-1));
