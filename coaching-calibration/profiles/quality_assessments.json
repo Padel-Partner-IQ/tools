@@ -1,6 +1,30 @@
 {
   "quality_assessments_id": "padel_partner_iq_quality_assessment_scale",
-  "quality_assessments_version": "1.0.0",
+  "quality_assessments_version": "1.1.0",
+  "evidence_policy": {
+    "policy_id": "coach_authored_quality_evidence",
+    "policy_version": "1.0.0",
+    "rules": {
+      "explicit_observation": {
+        "sources": ["coach_selected"],
+        "evidence_class": "explicit_coach_label"
+      },
+      "overall_excellent_inheritance": {
+        "overall_quality_id": "excellent",
+        "observation_quality_id": "excellent",
+        "sources": ["inherited_overall", "inherited_phase"],
+        "evidence_class": "positive_reference",
+        "candidate_provenance": "inherited_overall_excellent"
+      }
+    },
+    "precedence": ["explicit_observation", "overall_excellent_inheritance"],
+    "non_evidence_sources": ["defaulted_overall", "defaulted_phase"],
+    "interpretation": {
+      "positive_reference": "The measurement occurred in a shot the coach assessed as Excellent. It is valid positive-reference evidence but does not establish a range or threshold by itself.",
+      "good_default": "A Good workflow default is not coach-labelled observation evidence unless the coach explicitly confirms or changes it.",
+      "not_assessed": "Not Assessed contributes no quality evidence."
+    }
+  },
   "items": {
     "not_assessed": {
       "label": "Not Assessed",
