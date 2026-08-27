@@ -1,9 +1,9 @@
 {
   "version": "0.1.0",
-  "git_commit": "ca270a3f5af8",
+  "git_commit": "f67abfdfd422",
   "git_branch": "main",
   "git_dirty": false,
-  "build_date": "2026-08-27T15:32:02.277Z",
+  "build_date": "2026-08-27T16:17:13.615Z",
   "tools": [
     {
       "title": "Annotation Workbench",
