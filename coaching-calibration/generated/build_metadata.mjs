@@ -10,8 +10,8 @@
 
 export const BUILD_METADATA = Object.freeze({
   version: "0.7.2",
-  buildId: "e66cb6a",
+  buildId: "c2ab092",
   isDirty: false,
   source: "git",
-  generatedAt: "2026-08-27T14:24:47.523Z",
+  generatedAt: "2026-08-27T15:20:24.407Z",
 });
