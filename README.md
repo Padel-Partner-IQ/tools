@@ -37,8 +37,17 @@ access.
 
 ## Maintenance note
 
-Publishing authenticates with a personal access token held as the
-`TOOLS_REPO_PUBLISH_TOKEN` secret in `platform`. Personal access tokens expire.
-If the site stops updating after a `platform` change, check that secret before
-looking for a fault in the build: an expired token fails the publish step
-without affecting anything else.
+Publishing authenticates as the `padel-partner-iq-tools-publisher` GitHub App,
+installed on this repository alone with permission to write contents and read
+metadata. The workflow mints a token at the start of each run; it lasts an hour
+and is never stored.
+
+The stored credential is the app's private key, held as the
+`TOOLS_PUBLISH_APP_PRIVATE_KEY` secret in `platform` alongside
+`TOOLS_PUBLISH_APP_ID`. Unlike the personal access token this replaced, an app
+private key does not expire, so publishing cannot lapse quietly during a period
+when nobody is pushing.
+
+If the site stops updating after a `platform` change, check that the app is
+still installed on this repository and that both secrets are present, before
+looking for a fault in the build.
